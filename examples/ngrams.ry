@@ -1,0 +1,46 @@
+// tokenize and clean the input
+file := readFile("./data.txt")
+
+special := split("1234567890-=`~!@#$%^&*()_+[]{}|;:'\",<.>/?", "") then Set
+
+clean := s => split(s, "") 
+  where !(_ in special) 
+  then join(_, "")
+
+tokens := split(file, " ") 
+  map clean 
+  map lowercase
+  where #_ > 0
+
+// count the frequency of each token given another token
+freq := {}
+
+for t <- tokens {
+  next := tokens[index+1]
+  unless next?: break
+
+  freq[t] |= {}
+  freq[t][next] = freq[t][next] + 1 | 1
+}
+
+// pick the likely next token(s) given some token
+nextWords := {}
+
+for t <- freq {
+  avg := values(freq[t])
+    then sum(_) / #_
+
+  nextWords[t] = keys(freq[t]) 
+    where freq[t][_] >= avg
+}
+
+// pick tokens at random based on the previous token
+pick := _[random() * #_]
+
+var result := [pick(tokens)] // the seed
+for i <- ..100 {
+  prev := result[index]
+  result += [pick(nextWords[prev])]
+}
+
+print(join(result, " "))

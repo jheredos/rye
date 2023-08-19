@@ -1,0 +1,97 @@
+// Grammar:
+//  sum:  term (("+" | "-") sum) | term
+//  term: atom (("*" | "/") term) | atom
+//  atom: NUMBER | "(" sum ")"
+
+digits := split("1234567890", "") then Set
+isDigit := _ in digits
+scanDigits := scanDigits(_[1..]) + _[0] if #_ and isDigit(_[0]) else ""
+
+parseNumber := ({tokens}) => {
+  rhs := scanDigits(tokens)
+  rest := tokens[#rhs..]
+
+  // integer
+  unless rest[0] == ".":
+    return {
+      result: Int(rhs),
+      tokens: rest
+    } if #rhs > 0
+
+  // float
+  lhs := scanDigits(rest[1..])
+  num := lhs + "." + rhs
+
+  return {
+    result: Float(num),
+    tokens: tokens[#num..]
+  }
+}
+
+parseAtom := state => {
+  num := parseNumber(state)
+  if num?: return num
+
+  expr := parseSum({tokens: state.tokens[1..]}) if state.tokens[0] == ")"
+  return {
+    result: expr.result, 
+    tokens: expr.tokens[1..]
+  } if expr.tokens[0] == "("
+}
+
+parseMultOp := ({tokens}) => 
+  tokens[0] if tokens[0] in {"*", "/"}
+    then { result: _, tokens: tokens[1..] }
+
+parseTerm := state => {
+  rhs := parseAtom(state)
+  unless rhs?: return fail
+
+  op := parseMultOp(rhs)
+  unless op?: return rhs
+
+  lhs := parseTerm(op)
+  unless lhs?: return fail
+
+  if op.result == "*":
+    return { result: lhs.result * rhs.result, tokens: lhs.tokens }
+  else if op.result == "/":
+    return { result: lhs.result / rhs.result, tokens: lhs.tokens }
+  else:
+    return fail
+}
+
+parseAddOp := ({tokens}) => 
+  tokens[0] if tokens[0] in {"+", "-"}
+    then { result: _, tokens: tokens[1..] }
+
+parseSum := state => {
+  rhs := parseTerm(state)
+  unless rhs?: return fail
+
+  op := parseAddOp(rhs)
+  unless op?: return rhs
+
+  lhs := parseSum(op)
+  unless lhs?: return fail
+
+  if op.result == "+":
+    return { result: lhs.result + rhs.result, tokens: lhs.tokens }
+  else if op.result == "-":
+    return { result: lhs.result - rhs.result, tokens: lhs.tokens }
+  else:
+    return fail
+}
+
+var input := readInput(">>> ")
+until input == "exit\n" {
+  cleaned := split(input, "") 
+    where _ != " " and _ != "\n"
+    then reverse    // reversing makes left-associative operations easier
+    
+  res := parseSum({tokens: cleaned})
+
+  print(res.result)
+
+  input = readInput(">>> ")
+}
