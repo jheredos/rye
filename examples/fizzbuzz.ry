@@ -1,0 +1,8 @@
+fizzBuzz := x => {
+  fizz := "fizz" unless _ % 3 else ""
+  buzz := "buzz" unless _ % 5 else ""
+
+  1..x map fizz(_) + buzz(_) or _
+}
+
+for i <- fizzBuzz(35): print(i)

@@ -1,3 +1,5 @@
+// A command-line calculator that parses and solves arithmetic expressions
+
 // Grammar:
 //  sum:  term (("+" | "-") sum) | term
 //  term: atom (("*" | "/") term) | atom

@@ -216,7 +216,7 @@ func getAssignmentTarget(lhs *Node, env *Environment, constant bool) (assignFunc
 
 	return func(_ *Node) error {
 		return nil
-	}, fmt.Errorf("Invalid assignemnt target")
+	}, fmt.Errorf("Invalid assignment target")
 }
 
 func getDestructuredAssign(assignee *Node, env *Environment) (assignFunc func(*Node) error, err error) {

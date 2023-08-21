@@ -415,6 +415,19 @@ sales
 // ["increasing", "decreasing", "increasing", "increasing", "decreasing"]
 ```
 
+#### Built-in functions
+I/O utils: `print(args...)`, `readInput(prompt)`, `readFile(filepath)`
 
+Math utils: `sum(args...)`, `max(args...)`, `min(args...)`, `random()`
+
+String utils: `split(str, divider)`, `join(str, divider)`, `uppercase(str)`, `lowercase(str)`
+
+Type casts and utils: `typeof(arg)`, `Int(arg)`, `Float(arg)`, `String(arg)`, `Set(args...)`, `List(args...)`
+
+Set: `union(a, b)`, `intersection(a, b)`, `difference(a, b)`, `add(set, val)`, `remove(set, val)`
+
+Object: `keys(obj)`, `values(obj)`
+
+List: `flat(list)`,`find(list, predicate)`,`findIndex(list, predicate)`,`append(list, val)`,`reverse(list)`
     
 

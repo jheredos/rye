@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/jheredos/rye/interpreter"
@@ -20,7 +19,7 @@ func main() {
 }
 
 func runFile(path string) {
-	file, err := ioutil.ReadFile(path) // read file
+	file, err := os.ReadFile(path) // read file
 	if err != nil {
 		panic(err)
 	}
@@ -46,6 +45,7 @@ func runFile(path string) {
 		Consts: map[string]*interpreter.Node{},
 		Vars:   map[string]*interpreter.Node{},
 	}
+	// env.Parent.Consts[".FILEPATH"] =
 	_, err = interpreter.Interpret(root, env)
 	if err != nil {
 		fmt.Println(err)

@@ -1,3 +1,5 @@
+// Randomly generates text resembling that of an input file
+
 // tokenize and clean the input
 file := readFile("./data.txt")
 
