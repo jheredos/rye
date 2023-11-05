@@ -2,8 +2,6 @@ package interpreter
 
 import (
 	"fmt"
-	"io/ioutil"
-	"strings"
 )
 
 func Interpret(n *Node, env *Environment) (*Node, error) {
@@ -31,56 +29,23 @@ func Interpret(n *Node, env *Environment) (*Node, error) {
 		return resolveIdentifier(n, env)
 	// literals
 	case IntNT, FloatNT, BoolNT, StringNT, FailNT, SuccessNT, NullNT, SetNT:
-		return &Node{
-			Type:  n.Type,
-			Val:   n.Val,
-			Scope: n.Scope,
-			L:     n.L,
-			R:     n.R,
-		}, nil
+		return copyNode(n), nil
 	case LambdaNT:
-		scope := n.Scope
-		if scope == nil {
-			scope = &Environment{
-				Parent: env,
-				Consts: map[string]*Node{},
-				Vars:   map[string]*Node{},
-			}
-		}
-		return &Node{
-			Type:  n.Type,
-			Val:   n.Val,
-			Scope: scope,
-			L:     n.L,
-			R:     n.R,
-		}, nil
-	case ObjectNT:
 		if n.Scope == nil {
-			return &Node{
-				Type: ObjectNT,
-				Scope: &Environment{
-					Vars: map[string]*Node{},
-				},
-			}, nil
+			n.Scope = newScope(env)
+		}
+		return copyNode(n), nil
+	case ObjectNT:
+		if n.Val == nil {
+			return newObject(Object{}), nil
 		}
 		return n, nil
 	case ModuleNT:
 		return n, nil
 	case ListNT:
-		list := []*Node{}
-		for _, m := range n.Val.([]*Node) {
-			val, err := Interpret(m, env)
-			if err != nil {
-				return nil, err
-			}
-			list = append(list, val)
-		}
-		return &Node{
-			Type: ListNT,
-			Val:  list,
-		}, nil
-	case KVPairNT:
-		return interpretKVPair(n, env)
+		return interpretList(n, env)
+	case ObjectItemNT:
+		return interpretObjectItem(n, env)
 	case SetItemNT:
 		return interpretSetItem(n, env)
 	case ConstDeclNT, VarDeclNT:
@@ -100,6 +65,8 @@ func Interpret(n *Node, env *Environment) (*Node, error) {
 		return interpretWhere(n, env)
 	case PipeNT:
 		return interpretPipe(n, env)
+	case FindNT:
+		return interpretFind(n, env)
 	case BracketAccessNT:
 		return interpretBracketAccess(n, env)
 	case FieldAccessNT:
@@ -121,213 +88,10 @@ func Interpret(n *Node, env *Environment) (*Node, error) {
 	return nil, fmt.Errorf("Unknown node type")
 }
 
-func resolveIdentifier(n *Node, env *Environment) (res *Node, err error) {
-	ident := n.Val.(string)
-	for e := env; e != nil; e = e.Parent {
-		if val, ok := e.Consts[ident]; ok {
-			return val, nil
-		}
-		if val, ok := e.Vars[ident]; ok {
-			return val, nil
-		}
-	}
-
-	return nil, fmt.Errorf("\"%s\" is undefined", ident)
-}
-
-func declareVar(n *Node, env *Environment) (res *Node, err error) {
-	val, err := Interpret(n.R, env)
-	if err != nil {
-		return nil, err
-	}
-
-	// assign, err := getAssignmentTarget(n.L, env)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	ident := n.L.Val.(string)
-	if _, exists := env.Consts[ident]; exists {
-		return nil, fmt.Errorf("\"%s\" is already defined", ident)
-	}
-	if _, exists := env.Vars[ident]; exists {
-		return nil, fmt.Errorf("\"%s\" is already defined", ident)
-	}
-
-	// assign(val)
-	if n.Type == VarDeclNT {
-		env.Vars[ident] = val
-	} else {
-		env.Consts[ident] = val
-	}
-
-	return &Node{Type: SuccessNT}, nil
-}
-
-func assignVar(n *Node, env *Environment) (res *Node, err error) {
-	assign, err := getAssignmentTarget(n.L, env, false)
-	if err != nil {
-		return nil, err
-	}
-
-	val, err := Interpret(n.R, env)
-	if err != nil {
-		return nil, err
-	}
-
-	err = assign(val)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Node{Type: SuccessNT}, nil
-}
-
-func getAssignmentTarget(lhs *Node, env *Environment, constant bool) (assignFunc func(*Node) error, err error) {
-	// basic identifiers
-	if lhs.L == nil && lhs.Type == IdentifierNT {
-		ident := lhs.Val.(string)
-		for e := env; e != nil; e = e.Parent {
-			if _, exists := e.Consts[ident]; exists {
-				return nil, fmt.Errorf("Cannot assign to constant variable \"%s\"", ident)
-			}
-			if _, exists := e.Vars[ident]; exists {
-				return func(n *Node) error {
-					if constant {
-						e.Consts[ident] = n
-					} else {
-						e.Vars[ident] = n
-					}
-					return nil
-				}, nil
-			}
-		}
-		return nil, fmt.Errorf("Cannot assign to undefined variable \"%s\"", ident)
-	}
-
-	// destructured assigns
-	if lhs.Type == KVPairNT || lhs.Type == ListNT {
-		return getDestructuredAssign(lhs, env)
-	}
-
-	// nested assigns, e.g. list index or object field
-	if lhs.L != nil && lhs.L.Type == ListNT || lhs.L.Type == ObjectNT {
-		return getNestedAssign(lhs, env)
-	}
-
-	return func(_ *Node) error {
-		return nil
-	}, fmt.Errorf("Invalid assignment target")
-}
-
-func getDestructuredAssign(assignee *Node, env *Environment) (assignFunc func(*Node) error, err error) {
-	switch assignee.Type {
-	case ListNT:
-		return func(n *Node) error {
-			if n.Type != ListNT {
-				for _, m := range assignee.Val.([]*Node) {
-					env.Consts[m.Val.(string)] = &Node{Type: FailNT}
-				}
-				return nil
-			}
-
-			for i, m := range assignee.Val.([]*Node) {
-				if i < len(n.Val.([]*Node)) {
-					env.Consts[m.Val.(string)] = n.Val.([]*Node)[i]
-				} else {
-					env.Consts[m.Val.(string)] = &Node{Type: FailNT}
-				}
-			}
-
-			return nil
-		}, nil
-
-	}
-
-	return nil, fmt.Errorf("Invalid assignemnt target")
-}
-
-func getNestedAssign(assignee *Node, env *Environment) (assignFunc func(*Node) error, err error) {
-	// assignments to list indexes and object fields
-	container, err := Interpret(assignee.L, env)
-	if err != nil {
-		return nil, err
-	}
-
-	switch container.Type {
-	case ListNT:
-		{
-			idxNode, err := Interpret(assignee.R, env)
-			length := len(container.Val.([]*Node))
-			if err != nil {
-				return nil, err
-			}
-			switch idxNode.Type {
-			case IntNT:
-				idx := int(idxNode.Val.(int64))
-				if idx < 0 {
-					idx = length + idx
-				}
-				if idx >= length || (idx < 0 && -idx >= length+1) {
-					return nil, fmt.Errorf("Cannot assign to list. Index out of range.")
-				}
-				return func(n *Node) error {
-					container.Val.([]*Node)[idx] = n
-					return nil
-				}, nil
-			case FloatNT:
-				idx := int(idxNode.Val.(float64))
-				if idx < 0 {
-					idx = length + idx
-				}
-				if idx >= length || (idx < 0 && -idx >= length+1) {
-					return nil, fmt.Errorf("Cannot assign to list. Index out of range.")
-				}
-				return func(n *Node) error {
-					container.Val.([]*Node)[idx] = n
-					return nil
-				}, nil
-			default:
-				return nil, fmt.Errorf("Cannot assign to list index. Invalid index.")
-			}
-		}
-	case ObjectNT:
-		{
-			if assignee.R.Type != StringNT && assignee.R.Type != IdentifierNT {
-				return nil, fmt.Errorf("Cannot assign. Invalid object field key.")
-			}
-
-			var key string
-			if assignee.Type == BracketAccessNT && assignee.R.Type == IdentifierNT {
-				val, err := Interpret(assignee.R, env)
-				if err != nil {
-					return nil, err
-				}
-				if val.Type != StringNT {
-					return nil, fmt.Errorf("Cannot assign. Invalid object field key.")
-				}
-				key = val.Val.(string)
-			} else {
-				key = assignee.R.Val.(string)
-			}
-
-			return func(n *Node) error {
-				container.Scope.Vars[key] = n
-				return nil
-			}, nil
-		}
-	default:
-		return nil, fmt.Errorf("Invalid assignment target.")
-	}
-}
-
 func interpretStmt(root *Node, env *Environment) (res *Node, err error) {
 	for n := root; n != nil; n = n.R {
 		if n.L != nil && n.L.Type == StmtNT {
-			res, err = Interpret(n.L, &Environment{
-				Parent: env,
-				Consts: map[string]*Node{},
-				Vars:   map[string]*Node{},
-			})
+			res, err = Interpret(n.L, newScope(env))
 		} else {
 			res, err = Interpret(n.L, env)
 		}
@@ -363,48 +127,26 @@ func interpretMathOp(n *Node, env *Environment) (res *Node, err error) {
 		{
 			switch t {
 			case IntNT:
-				return &Node{
-					Type: IntNT,
-					Val:  l.Val.(int64) + r.Val.(int64),
-				}, nil
+				return newInt(l.Val.(int64) + r.Val.(int64)), nil
 			case FloatNT:
-				return &Node{
-					Type: FloatNT,
-					Val:  l.Val.(float64) + r.Val.(float64),
-				}, nil
+				return newFloat(l.Val.(float64) + r.Val.(float64)), nil
 			case StringNT:
-				return &Node{
-					Type: StringNT,
-					Val:  l.Val.(string) + r.Val.(string),
-				}, nil
+				return newString(l.Val.(string) + r.Val.(string)), nil
 			case ListNT:
-				combined := l.Val.([]*Node)
-				for _, x := range r.Val.([]*Node) {
-					combined = append(combined, x)
-				}
-				return &Node{
-					Type: ListNT,
-					Val:  combined,
-				}, nil
+				return newList(append(l.Val.(List), r.Val.(List)...)), nil
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
 		}
 	case SubtNT:
 		{
 			switch t {
 			case IntNT:
-				return &Node{
-					Type: IntNT,
-					Val:  l.Val.(int64) - r.Val.(int64),
-				}, nil
+				return newInt(l.Val.(int64) - r.Val.(int64)), nil
 			case FloatNT:
-				return &Node{
-					Type: FloatNT,
-					Val:  l.Val.(float64) - r.Val.(float64),
-				}, nil
+				return newFloat(l.Val.(float64) - r.Val.(float64)), nil
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
 		}
 	case DivNT:
@@ -412,39 +154,27 @@ func interpretMathOp(n *Node, env *Environment) (res *Node, err error) {
 			switch t {
 			case IntNT:
 				if r.Val.(int64) == 0 {
-					return &Node{Type: FailNT}, nil
+					return FAIL, nil
 				}
-				return &Node{
-					Type: FloatNT,
-					Val:  float64(l.Val.(int64)) / float64(r.Val.(int64)),
-				}, nil
+				return newFloat(float64(l.Val.(int64)) / float64(r.Val.(int64))), nil
 			case FloatNT:
 				if r.Val.(float64) == 0 {
-					return &Node{Type: FailNT}, nil
+					return FAIL, nil
 				}
-				return &Node{
-					Type: FloatNT,
-					Val:  l.Val.(float64) / r.Val.(float64),
-				}, nil
+				return newFloat(l.Val.(float64) / r.Val.(float64)), nil
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
 		}
 	case MultNT:
 		{
 			switch t {
 			case IntNT:
-				return &Node{
-					Type: IntNT,
-					Val:  l.Val.(int64) * r.Val.(int64),
-				}, nil
+				return newInt(l.Val.(int64) * r.Val.(int64)), nil
 			case FloatNT:
-				return &Node{
-					Type: FloatNT,
-					Val:  l.Val.(float64) * r.Val.(float64),
-				}, nil
+				return newFloat(l.Val.(float64) * r.Val.(float64)), nil
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
 		}
 	case ModuloNT:
@@ -452,14 +182,11 @@ func interpretMathOp(n *Node, env *Environment) (res *Node, err error) {
 			switch t {
 			case IntNT:
 				if r.Val.(int64) == 0 {
-					return &Node{Type: FailNT}, nil
+					return FAIL, nil
 				}
-				return &Node{
-					Type: IntNT,
-					Val:  l.Val.(int64) % r.Val.(int64),
-				}, nil
+				return newInt(l.Val.(int64) % r.Val.(int64)), nil
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
 		}
 	}
@@ -478,7 +205,7 @@ func interpretPower(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if rhs.Type != IntNT {
-		return &Node{Type: FailNT}, nil
+		return FAIL, nil
 	}
 
 	if lhs.Type == FloatNT {
@@ -491,13 +218,9 @@ func interpretPower(n *Node, env *Environment) (res *Node, err error) {
 		for ; i < x; i++ {
 			total *= lhs.Val.(float64)
 		}
-		return &Node{
-			Type: FloatNT,
-			Val:  total,
-		}, nil
-	}
 
-	if lhs.Type == IntNT {
+		return newFloat(total), nil
+	} else if lhs.Type == IntNT {
 		var total int64 = 1
 		var i int64 = 0
 		x := rhs.Val.(int64)
@@ -507,90 +230,14 @@ func interpretPower(n *Node, env *Environment) (res *Node, err error) {
 		for ; i < x; i++ {
 			total *= lhs.Val.(int64)
 		}
+
 		if rhs.Val.(int64) < 0 {
-			return &Node{
-				Type: FloatNT,
-				Val:  1 / float64(total),
-			}, nil
+			return newFloat(1 / float64(total)), nil
 		}
-		return &Node{
-			Type: IntNT,
-			Val:  total,
-		}, nil
+		return newInt(total), nil
 	}
 
-	return &Node{Type: FailNT}, nil
-}
-
-// maybeCastNumbers casts numbers to floats if one is a float
-func maybeCastNumbers(a, b *Node) (*Node, *Node, NodeType) {
-	if a == nil || b == nil {
-		return nil, nil, ErrorNT
-	}
-
-	switch a.Type {
-	case IntNT:
-		if b.Type == IntNT {
-			return a, b, IntNT
-		} else if b.Type == FloatNT {
-			return &Node{
-				Type: FloatNT,
-				Val:  float64(a.Val.(int64)),
-			}, b, FloatNT
-		} else {
-			return a, b, ErrorNT
-		}
-	case FloatNT:
-		if b.Type == IntNT {
-			return a, &Node{
-				Type: FloatNT,
-				Val:  float64(b.Val.(int64)),
-			}, FloatNT
-		} else if b.Type == FloatNT {
-			return a, b, FloatNT
-		} else {
-			return a, b, ErrorNT
-		}
-	case StringNT:
-		switch b.Type {
-		case IntNT, FloatNT:
-			return a, &Node{
-				Type: StringNT,
-				Val:  b.ToString(),
-			}, StringNT
-		case StringNT:
-			return a, b, StringNT
-		default:
-			return a, b, ErrorNT
-		}
-	case ListNT:
-		if b.Type == ListNT {
-			return a, b, ListNT
-		}
-		return a, b, ErrorNT
-	case BoolNT:
-		if b.Type == BoolNT {
-			return a, b, BoolNT
-		}
-		return a, b, ErrorNT
-	case SuccessNT:
-		if b.Type == SuccessNT {
-			return a, b, SuccessNT
-		}
-		return a, b, ErrorNT
-	case FailNT:
-		if b.Type == FailNT {
-			return a, b, FailNT
-		}
-		return a, b, ErrorNT
-	case NullNT:
-		if b.Type == NullNT {
-			return a, b, NullNT
-		}
-		return a, b, ErrorNT
-	default:
-		return a, b, ErrorNT
-	}
+	return FAIL, nil
 }
 
 func interpretLogicOp(n *Node, env *Environment) (res *Node, err error) {
@@ -616,7 +263,7 @@ func interpretLogicOp(n *Node, env *Environment) (res *Node, err error) {
 		if isTruthy(lhs) {
 			return rhs, nil
 		}
-		return &Node{Type: BoolNT, Val: false}, nil
+		return FALSE, nil
 	case LogicOrNT:
 		if isTruthy(lhs) {
 			return lhs, nil
@@ -630,39 +277,6 @@ func interpretLogicOp(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	return nil, fmt.Errorf("Unknown logical operator")
-}
-
-func evalEquality(a, b *Node) (bool, error) {
-	l, r, t := maybeCastNumbers(a, b)
-	switch t {
-	case IntNT:
-		return l.Val.(int64) == r.Val.(int64), nil
-	case FloatNT:
-		return l.Val.(float64) == r.Val.(float64), nil
-	case StringNT:
-		return l.Val.(string) == r.Val.(string), nil
-	case ListNT:
-		if len(l.Val.([]*Node)) != len(r.Val.([]*Node)) {
-			return false, nil
-		}
-		for i, n := range a.Val.([]*Node) {
-			equal, err := evalEquality(n, r.Val.([]*Node)[i])
-			if !equal || err != nil {
-				return false, err
-			}
-		}
-		return true, nil
-	case BoolNT:
-		return l.Val.(bool) == r.Val.(bool), nil
-	case SuccessNT:
-		return true, nil
-	case FailNT:
-		return true, nil
-	case NullNT:
-		return true, nil
-	default:
-		return false, fmt.Errorf("Cannot compare types")
-	}
 }
 
 func interpretComparison(n *Node, env *Environment) (res *Node, err error) {
@@ -682,62 +296,56 @@ func interpretComparison(n *Node, env *Environment) (res *Node, err error) {
 		return nil, err
 	}
 
+	// ==, !=
 	switch n.Type {
 	case EqualNT:
 		equal, err := evalEquality(lhs, rhs)
 		if err != nil {
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
-		return &Node{Type: BoolNT, Val: equal}, nil
+		return newBool(equal), nil
 	case NotEqualNT:
 		equal, err := evalEquality(lhs, rhs)
 		if err != nil {
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
-		return &Node{Type: BoolNT, Val: !equal}, nil
+		return newBool(!equal), nil
+	}
+
+	// <, >, <=, >=
+	l, r, t := maybeCastNumbers(lhs, rhs)
+	switch n.Type {
 	case LessEqualNT:
-		l, r, t := maybeCastNumbers(lhs, rhs)
 		switch t {
 		case IntNT:
-			return &Node{Type: BoolNT, Val: l.Val.(int64) <= r.Val.(int64)}, nil
+			return newBool(l.Val.(int64) <= r.Val.(int64)), nil
 		case FloatNT:
-			return &Node{Type: BoolNT, Val: l.Val.(float64) <= r.Val.(float64)}, nil
-		default:
-			return &Node{Type: FailNT}, nil
+			return newBool(l.Val.(float64) <= r.Val.(float64)), nil
 		}
 	case GreaterEqualNT:
-		l, r, t := maybeCastNumbers(lhs, rhs)
 		switch t {
 		case IntNT:
-			return &Node{Type: BoolNT, Val: l.Val.(int64) >= r.Val.(int64)}, nil
+			return newBool(l.Val.(int64) >= r.Val.(int64)), nil
 		case FloatNT:
-			return &Node{Type: BoolNT, Val: l.Val.(float64) >= r.Val.(float64)}, nil
-		default:
-			return &Node{Type: FailNT}, nil
+			return newBool(l.Val.(float64) >= r.Val.(float64)), nil
 		}
 	case LessNT:
-		l, r, t := maybeCastNumbers(lhs, rhs)
 		switch t {
 		case IntNT:
-			return &Node{Type: BoolNT, Val: l.Val.(int64) < r.Val.(int64)}, nil
+			return newBool(l.Val.(int64) < r.Val.(int64)), nil
 		case FloatNT:
-			return &Node{Type: BoolNT, Val: l.Val.(float64) < r.Val.(float64)}, nil
-		default:
-			return &Node{Type: FailNT}, nil
+			return newBool(l.Val.(float64) < r.Val.(float64)), nil
 		}
 	case GreaterNT:
-		l, r, t := maybeCastNumbers(lhs, rhs)
 		switch t {
 		case IntNT:
-			return &Node{Type: BoolNT, Val: l.Val.(int64) > r.Val.(int64)}, nil
+			return newBool(l.Val.(int64) > r.Val.(int64)), nil
 		case FloatNT:
-			return &Node{Type: BoolNT, Val: l.Val.(float64) > r.Val.(float64)}, nil
-		default:
-			return &Node{Type: FailNT}, nil
+			return newBool(l.Val.(float64) > r.Val.(float64)), nil
 		}
 	}
 
-	return nil, fmt.Errorf("Unknown comparison operator")
+	return FAIL, nil
 }
 
 func interpretIn(n *Node, env *Environment) (res *Node, err error) {
@@ -752,53 +360,20 @@ func interpretIn(n *Node, env *Environment) (res *Node, err error) {
 
 	switch container.Type {
 	case ListNT:
-		for i := 0; i < len(container.Val.([]*Node)); i++ {
-			equal, _ := evalEquality(item, container.Val.([]*Node)[i])
+		for i := 0; i < len(container.Val.(List)); i++ {
+			equal, _ := evalEquality(item, container.Val.(List)[i])
 			if equal {
-				return &Node{
-					Type: BoolNT,
-					Val:  true,
-				}, nil
+				return TRUE, nil
 			}
 		}
 
-		return &Node{
-			Type: BoolNT,
-			Val:  false,
-		}, nil
+		return FALSE, nil
 	case SetNT:
-		set := container.Val.(map[Value]bool)
-		return &Node{
-			Type: BoolNT,
-			Val:  set[item.toValue()],
-		}, nil
+		set := container.Val.(Set)
+		return newBool(set[item.toValue()]), nil
 
 	default:
-		return &Node{Type: FailNT}, nil
-	}
-}
-
-func isTruthy(n *Node) bool {
-	if n == nil {
-		return false
-	}
-	switch n.Type {
-	case SuccessNT:
-		return true
-	case FailNT:
-		return false
-	case FloatNT:
-		return n.Val.(float64) != 0
-	case IntNT:
-		return n.Val.(int64) != 0
-	case BoolNT:
-		return n.Val.(bool)
-	case StringNT:
-		return len(n.Val.(string)) != 0
-	case NullNT:
-		return false
-	default:
-		return true
+		return FAIL, nil
 	}
 }
 
@@ -813,57 +388,38 @@ func interpretUnOp(n *Node, env *Environment) (res *Node, err error) {
 	}
 	switch n.Type {
 	case LogicNotNT:
-		return &Node{
-			Type: BoolNT,
-			Val:  !isTruthy(arg),
-		}, nil
+		return newBool(!isTruthy(arg)), nil
 	case MaybeNT:
 		if arg.Type == FailNT {
 			return arg, nil
 		}
-		return &Node{Type: SuccessNT}, nil
+		return SUCCESS, nil
 	case CardinalityNT:
 		{
+			var cardinality int
 			switch arg.Type {
 			case ListNT:
-				return &Node{
-					Type: IntNT,
-					Val:  int64(len(arg.Val.([]*Node))),
-				}, nil
+				cardinality = len(arg.Val.(List))
 			case StringNT:
-				return &Node{
-					Type: IntNT,
-					Val:  int64(len(arg.Val.(string))),
-				}, nil
+				cardinality = len(arg.Val.(string))
 			case SetNT:
-				return &Node{
-					Type: IntNT,
-					Val:  int64(len(arg.Val.(map[Value]bool))),
-				}, nil
+				cardinality = len(arg.Val.(Set))
 			case ObjectNT:
-				return &Node{
-					Type: IntNT,
-					Val:  int64(len(arg.Val.(map[string]*Node))),
-				}, nil
+				cardinality = len(arg.Val.(Object))
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
+			return newInt(int64(cardinality)), nil
 		}
 	case UnaryNegNT:
 		{
 			switch arg.Type {
 			case IntNT:
-				return &Node{
-					Type: IntNT,
-					Val:  -arg.Val.(int64),
-				}, nil
+				return newInt(-arg.Val.(int64)), nil
 			case FloatNT:
-				return &Node{
-					Type: FloatNT,
-					Val:  -arg.Val.(float64),
-				}, nil
+				return newFloat(-arg.Val.(float64)), nil
 			default:
-				return &Node{Type: FailNT}, nil
+				return FAIL, nil
 			}
 		}
 	}
@@ -879,109 +435,20 @@ func interpretIf(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if isTruthy(condRes) {
-		if result.Type == ThenNT {
+		if result.Type == ThenBranchNT {
+			// expr has an else branch
 			return Interpret(result.L, env)
 		} else {
+			// expr does not have an else branch
 			return Interpret(result, env)
 		}
 	} else {
-		if result.Type == ThenNT {
+		if result.Type == ThenBranchNT {
 			return Interpret(result.R, env)
 		} else {
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
 	}
-}
-
-func countArgs(params, args *Node) (p, a int) {
-	for param := params; ; p++ {
-		if param == nil || (param.Val == nil && param.L == nil) {
-			break
-		}
-		param = param.R
-	}
-
-	for arg := args; ; a++ {
-		if arg == nil || arg.L == nil {
-			break
-		}
-		arg = arg.R
-	}
-
-	return p, a
-}
-
-func assignArg(arg, param *Node, scope *Environment) {
-	if param == nil || (param.L == nil && param.Val == nil) {
-		return
-	}
-
-	// identifier: 	param{Val: string, R: nextParam}
-	// list:				param{L: List of idents, R: nextParam}
-	// object:			param{L: KVPair{Val: key, L: nil | ident, R: nil | nextField}, R: nextParam}
-
-	// plain parameter
-	if param.Val != nil {
-		scope.Vars[param.Val.(string)] = arg
-		return
-	}
-
-	// destructured param
-	switch param.L.Type {
-	case ListNT:
-		{
-			if arg.Type != ListNT {
-				for _, p := range param.L.Val.([]*Node) {
-					scope.Vars[p.Val.(string)] = &Node{Type: FailNT}
-				}
-				return
-			}
-			as := arg.Val.([]*Node)
-			for i, p := range param.L.Val.([]*Node) {
-				if i >= len(as) {
-					scope.Vars[p.Val.(string)] = &Node{Type: FailNT}
-				}
-				scope.Vars[p.Val.(string)] = as[i]
-			}
-			return
-		}
-	case KVPairNT, IdentifierNT:
-		{
-			if arg.Type != ObjectNT {
-				// The arg is not an object
-				for p := param.L; p != nil; p = p.R {
-					if p.L != nil {
-						assignArg(&Node{Type: FailNT}, p.L, scope)
-					} else {
-						scope.Vars[p.Val.(string)] = &Node{Type: FailNT}
-					}
-				}
-				return
-			}
-
-			obj := arg.Scope.Vars
-			for p := param.L; p != nil; p = p.R {
-				old := p.Val.(string)
-				if p.L != nil {
-					// rename the object field
-					new := p.L.Val.(string)
-					val, ok := obj[old]
-					if ok {
-						// The field exists. Add to scope
-						scope.Vars[new] = val
-					} else {
-						// The field does not exist on the arg
-						scope.Vars[new] = &Node{Type: FailNT}
-					}
-				} else {
-					// Add to scope without renaming
-					scope.Vars[old] = obj[old]
-				}
-			}
-		}
-
-	}
-
 }
 
 func interpretCall(n *Node, env *Environment) (res *Node, err error) {
@@ -1010,15 +477,12 @@ func interpretCall(n *Node, env *Environment) (res *Node, err error) {
 		return lambda.Func(env, args...)
 	}
 
-	scope := &Environment{
-		Consts: map[string]*Node{},
-		Vars:   map[string]*Node{},
-	}
+	parent := env
 	if lambda.Scope != nil {
-		scope.Parent = lambda.Scope
-	} else {
-		scope.Parent = env
+		parent = lambda.Scope
 	}
+
+	scope := newScope(parent)
 
 	ps, as := countArgs(lambda.L, n.R)
 	if ps > as {
@@ -1047,11 +511,6 @@ func interpretCall(n *Node, env *Environment) (res *Node, err error) {
 		param, arg = param.R, arg.R
 	}
 
-	// fmt.Println("\nScope:")
-	// for k := range scope.Vars {
-	// 	fmt.Printf("%s: \t%s\n", k, scope.Vars[k].ToString())
-	// }
-
 	if lambda.R.Type == StmtNT {
 		res, err = interpretFunctionBody(lambda.R, scope)
 	} else {
@@ -1071,11 +530,7 @@ func interpretCall(n *Node, env *Environment) (res *Node, err error) {
 func interpretFunctionBody(start *Node, env *Environment) (res *Node, err error) {
 	for n := start; n != nil; n = n.R {
 		if n.L != nil && n.L.Type == StmtNT {
-			res, err = Interpret(n.L, &Environment{
-				Parent: env,
-				Consts: map[string]*Node{},
-				Vars:   map[string]*Node{},
-			})
+			res, err = Interpret(n.L, newScope(env))
 		} else {
 			res, err = Interpret(n.L, env)
 		}
@@ -1092,58 +547,6 @@ func interpretFunctionBody(start *Node, env *Environment) (res *Node, err error)
 	return res, err
 }
 
-func iterateCollection(n *Node) func() *Node {
-	switch n.Type {
-	case ListNT:
-		list := n.Val.([]*Node)
-		i := -1
-		return func() *Node {
-			if i < len(list)-1 {
-				i++
-				return list[i]
-			}
-			return nil
-		}
-	case ObjectNT:
-		obj := n.Scope.Vars
-		keys := []string{}
-		for k := range obj {
-			keys = append(keys, k)
-		}
-		i := -1
-		return func() *Node {
-			if i < len(keys)-1 {
-				i++
-				return &Node{
-					Type: StringNT,
-					Val:  keys[i],
-				}
-			}
-			return nil
-		}
-	case SetNT:
-		set := n.Val.(map[Value]bool)
-		items := []*Node{}
-		for k := range set {
-			if set[k] {
-				items = append(items, k.toNode())
-			}
-		}
-		i := -1
-		return func() *Node {
-			if i < len(items)-1 {
-				i++
-				return items[i]
-			}
-			return nil
-		}
-	default:
-		return func() *Node {
-			return nil
-		}
-	}
-}
-
 func interpretMap(n *Node, env *Environment) (res *Node, err error) {
 	lhs, err := Interpret(n.L, env)
 	if err != nil {
@@ -1151,7 +554,7 @@ func interpretMap(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if lhs.Type == FailNT || (lhs.Type != ListNT && lhs.Type != SetNT) {
-		return &Node{Type: FailNT}, nil
+		return FAIL, nil
 	}
 
 	callee := n.R
@@ -1167,11 +570,11 @@ func interpretMap(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if lambda.Type != LambdaNT {
-		return &Node{Type: FailNT}, nil
+		return FAIL, nil
 	}
 
-	newList := []*Node{}
-	newSet := map[Value]bool{}
+	resList := List{}
+	resSet := Set{}
 
 	next := iterateCollection(lhs)
 	for item, i := next(), 0; item != nil; item, i = next(), i+1 {
@@ -1180,7 +583,7 @@ func interpretMap(n *Node, env *Environment) (res *Node, err error) {
 			return nil, err
 		}
 
-		env.Consts["index"] = &Node{Type: IntNT, Val: int64(i)}
+		env.Consts["index"] = newInt(int64(i))
 
 		var new *Node
 		if lambda.Func != nil {
@@ -1198,26 +601,20 @@ func interpretMap(n *Node, env *Environment) (res *Node, err error) {
 		}
 
 		if lhs.Type == ListNT {
-			newList = append(newList, new)
+			resList = append(resList, new)
 		}
 		if lhs.Type == SetNT {
-			newSet[new.toValue()] = true
+			resSet[new.toValue()] = true
 		}
 	}
 	env.Consts["_"] = nil
 	env.Consts["index"] = nil
 
 	if lhs.Type == SetNT {
-		return &Node{
-			Type: SetNT,
-			Val:  newSet,
-		}, nil
+		return newSet(resSet), nil
 	}
 
-	return &Node{
-		Type: ListNT,
-		Val:  newList,
-	}, nil
+	return newList(resList), nil
 }
 
 func interpretWhere(n *Node, env *Environment) (res *Node, err error) {
@@ -1227,8 +624,7 @@ func interpretWhere(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if lhs.Type == FailNT || (lhs.Type != ListNT && lhs.Type != SetNT) {
-		return &Node{Type: FailNT}, nil
-		// return nil, fmt.Errorf("Invalid argument provided to \"where\"")
+		return FAIL, nil
 	}
 
 	callee := n.R
@@ -1244,12 +640,11 @@ func interpretWhere(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if lambda.Type != LambdaNT {
-		return &Node{Type: FailNT}, nil
-		// return nil, fmt.Errorf("Invalid second argument provided to \"where\"")
+		return FAIL, nil
 	}
 
-	newList := []*Node{}
-	newSet := map[Value]bool{}
+	resList := List{}
+	resSet := Set{}
 
 	next := iterateCollection(lhs)
 	for item, i := next(), 0; item != nil; item, i = next(), i+1 {
@@ -1258,7 +653,7 @@ func interpretWhere(n *Node, env *Environment) (res *Node, err error) {
 			return nil, err
 		}
 
-		env.Consts["index"] = &Node{Type: IntNT, Val: int64(i)}
+		env.Consts["index"] = newInt(int64(i))
 		var result *Node
 		if lambda.Func != nil {
 			result, err = lambda.Func(env, item)
@@ -1280,10 +675,10 @@ func interpretWhere(n *Node, env *Environment) (res *Node, err error) {
 
 		if isTruthy(result) {
 			if lhs.Type == ListNT {
-				newList = append(newList, val)
+				resList = append(resList, val)
 			}
 			if lhs.Type == SetNT {
-				newSet[val.toValue()] = true
+				resSet[val.toValue()] = true
 			}
 		}
 	}
@@ -1291,16 +686,10 @@ func interpretWhere(n *Node, env *Environment) (res *Node, err error) {
 	env.Consts["index"] = nil
 
 	if lhs.Type == SetNT {
-		return &Node{
-			Type: SetNT,
-			Val:  newSet,
-		}, nil
+		return newSet(resSet), nil
 	}
 
-	return &Node{
-		Type: ListNT,
-		Val:  newList,
-	}, nil
+	return newList(resList), nil
 }
 
 func interpretPipe(n *Node, env *Environment) (res *Node, err error) {
@@ -1342,6 +731,73 @@ func interpretPipe(n *Node, env *Environment) (res *Node, err error) {
 	return Interpret(call, env)
 }
 
+func interpretFind(n *Node, env *Environment) (res *Node, err error) {
+	lhs, err := Interpret(n.L, env)
+	if err != nil {
+		return nil, err
+	}
+
+	if lhs.Type == FailNT {
+		return lhs, nil
+	}
+
+	callee := n.R
+	var lambda *Node
+	if callee.Type == IdentifierNT {
+		lambda, err = resolveIdentifier(callee, env)
+	} else {
+		lambda, err = Interpret(callee, env)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// built-in functions
+	if lambda.Func != nil {
+		return lambda.Func(env, lhs)
+	}
+
+	next := iterateCollection(lhs)
+	for item, i := next(), 0; item != nil; item, i = next(), i+1 {
+		val, err := Interpret(item, env)
+		if err != nil {
+			return nil, err
+		}
+
+		env.Consts["index"] = newInt(int64(i))
+		var result *Node
+		if lambda.Func != nil {
+			result, err = lambda.Func(env, item)
+		} else {
+			call := &Node{
+				Type: CallNT,
+				L:    lambda,
+				R: &Node{
+					Type: ArgNT,
+					L:    val,
+				},
+			}
+			result, err = Interpret(call, env)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		if isTruthy(result) {
+			env.Consts["_"] = nil
+			env.Consts["index"] = nil
+			return item, nil
+		}
+	}
+
+	env.Consts["_"] = nil
+	env.Consts["index"] = nil
+
+	return FAIL, nil
+}
+
 func interpretBracketAccess(n *Node, env *Environment) (res *Node, err error) {
 	src, err := Interpret(n.L, env)
 	if err != nil {
@@ -1361,62 +817,7 @@ func interpretBracketAccess(n *Node, env *Environment) (res *Node, err error) {
 		return getByName(src, accessor)
 	}
 
-	return &Node{Type: FailNT}, nil
-}
-
-func getByIndex(src, idxNode *Node) (res *Node, err error) {
-	var idx int64
-	switch idxNode.Type {
-	case IntNT:
-		idx = idxNode.Val.(int64)
-	case FloatNT:
-		idx = int64(idxNode.Val.(float64))
-	default:
-		return &Node{Type: FailNT}, nil
-	}
-
-	var length int64
-	switch src.Type {
-	case ListNT:
-		length = int64(len(src.Val.([]*Node)))
-	case StringNT:
-		length = int64(len(src.Val.(string)))
-
-	}
-
-	if idx >= length {
-		return &Node{Type: FailNT}, nil
-	}
-
-	if idx < 0 && -idx > length {
-		return &Node{Type: FailNT}, nil
-	}
-
-	if idx < 0 {
-		return src.Val.([]*Node)[length+idx], nil
-	}
-
-	if src.Type == StringNT {
-		return &Node{
-			Type: StringNT,
-			Val:  string(src.Val.(string)[idx]),
-		}, nil
-	}
-	return src.Val.([]*Node)[idx], nil
-}
-
-func getByName(src, nameNode *Node) (res *Node, err error) {
-	if nameNode.Type != StringNT {
-		return &Node{Type: FailNT}, nil
-	}
-
-	obj := src.Scope.Vars
-	val, ok := obj[nameNode.Val.(string)]
-	if !ok {
-		return &Node{Type: FailNT}, nil
-	}
-
-	return val, nil
+	return FAIL, nil
 }
 
 func interpretListSlice(n *Node, env *Environment) (res *Node, err error) {
@@ -1426,7 +827,8 @@ func interpretListSlice(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if src.Type != ListNT && src.Type != StringNT {
-		return nil, fmt.Errorf("Value is not a list and cannot be sliced")
+		return FAIL, nil
+		// return nil, fmt.Errorf("Value is not a list and cannot be sliced")
 	}
 
 	startNode := n.R.L
@@ -1439,7 +841,7 @@ func interpretListSlice(n *Node, env *Environment) (res *Node, err error) {
 	var end int64
 	switch src.Type {
 	case ListNT:
-		end = int64(len(src.Val.([]*Node)))
+		end = int64(len(src.Val.(List)))
 	case StringNT:
 		end = int64(len(src.Val.(string)))
 
@@ -1456,7 +858,7 @@ func interpretListSlice(n *Node, env *Environment) (res *Node, err error) {
 		case FloatNT:
 			start = int64(startVal.Val.(float64))
 		default:
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
 	}
 
@@ -1472,7 +874,7 @@ func interpretListSlice(n *Node, env *Environment) (res *Node, err error) {
 		case FloatNT:
 			end = int64(endVal.Val.(float64))
 		default:
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
 	}
 
@@ -1483,21 +885,15 @@ func interpretListSlice(n *Node, env *Environment) (res *Node, err error) {
 		if start > end {
 			start = end
 		}
-		return &Node{
-			Type: StringNT,
-			Val:  src.Val.(string)[int(start):int(end)],
-		}, nil
+		return newString(src.Val.(string)[int(start):int(end)]), nil
 	}
 
-	list := []*Node{}
-	for i := int(start); i < int(end) && i < len(src.Val.([]*Node)); i++ {
-		list = append(list, src.Val.([]*Node)[i])
+	list := List{}
+	for i := int(start); i < int(end) && i < len(src.Val.(List)); i++ {
+		list = append(list, src.Val.(List)[i])
 	}
 
-	return &Node{
-		Type: ListNT,
-		Val:  list,
-	}, nil
+	return newList(list), nil
 }
 
 func interpretWhile(stmt *Node, env *Environment) (res *Node, err error) {
@@ -1511,11 +907,7 @@ func interpretWhile(stmt *Node, env *Environment) (res *Node, err error) {
 		}
 		stop := false
 
-		scope := &Environment{
-			Parent: env,
-			Consts: map[string]*Node{},
-			Vars:   map[string]*Node{},
-		}
+		scope := newScope(env)
 
 		for n := stmt.R; n != nil; n = n.R {
 			if n.Type == StmtNT {
@@ -1552,27 +944,24 @@ func interpretWhile(stmt *Node, env *Environment) (res *Node, err error) {
 }
 
 func interpretFor(stmt *Node, env *Environment) (res *Node, err error) {
-	src, err := Interpret(stmt.L.R, env)
+	iterator, iteratee := stmt.L.L, stmt.L.R
+	src, err := Interpret(iteratee, env)
 	if err != nil {
 		return nil, err
 	}
 	if src.Type != ListNT && src.Type != ObjectNT && src.Type != SetNT {
-		return &Node{Type: FailNT}, nil
+		return FAIL, nil
 	}
 
-	iter := stmt.L.L.Val.(string)
+	iter := iterator.Val.(string)
 
 	// for each iteration
 	next := iterateCollection(src)
 	for item, i := next(), 0; item != nil; item, i = next(), i+1 {
-		scope := &Environment{
-			Parent: env,
-			Consts: map[string]*Node{},
-			Vars:   map[string]*Node{},
-		}
+		scope := newScope(env)
 
 		scope.Consts[iter] = item
-		scope.Consts["index"] = &Node{Type: IntNT, Val: int64(i)}
+		scope.Consts["index"] = newInt(int64(i))
 		stop := false
 
 		// for each statement in body
@@ -1635,7 +1024,7 @@ func interpretRange(n *Node, env *Environment) (res *Node, err error) {
 		return nil, err
 	}
 
-	rng := []*Node{}
+	rng := List{}
 	var i int64
 	if start != nil {
 		switch start.Type {
@@ -1644,7 +1033,7 @@ func interpretRange(n *Node, env *Environment) (res *Node, err error) {
 		case FloatNT:
 			i = int64(start.Val.(float64))
 		default:
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
 	}
 
@@ -1655,55 +1044,108 @@ func interpretRange(n *Node, env *Environment) (res *Node, err error) {
 	case FloatNT:
 		endVal = int64(end.Val.(float64))
 	default:
-		return &Node{Type: FailNT}, nil
+		return FAIL, nil
 	}
 
 	if i >= endVal {
 
-		return &Node{
-			Type: ListNT,
-			Val:  []*Node{},
-		}, nil
+		return newList(List{}), nil
 	}
 	for ; i < endVal; i++ {
-		rng = append(rng, &Node{
-			Type: IntNT,
-			Val:  i,
-		})
+		rng = append(rng, newInt(i))
 	}
 
-	return &Node{
-		Type: ListNT,
-		Val:  rng,
-	}, nil
+	return newList(rng), nil
 }
 
-func interpretKVPair(n *Node, env *Environment) (res *Node, err error) {
-	obj := map[string]*Node{}
+func interpretList(n *Node, env *Environment) (res *Node, err error) {
+	list := List{}
+
+	for _, m := range n.Val.(List) {
+		switch m.Type {
+		case SplatNT, RangeNT, MapNT, WhereNT:
+			var arg *Node
+			var err error
+			if m.Type == SplatNT {
+				arg, err = Interpret(m.R, env)
+			} else {
+				arg, err = Interpret(m, env)
+			}
+			if err != nil {
+				return nil, err
+			}
+
+			switch arg.Type {
+			case ListNT:
+				list = append(list, arg.Val.(List)...)
+			case SetNT:
+				set := arg.Val.(Set)
+				for k := range set {
+					if set[k] {
+						list = append(list, k.toNode())
+					}
+				}
+			default:
+				list = append(list, FAIL)
+			}
+			continue
+		default:
+			val, err := Interpret(m, env)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, val)
+		}
+	}
+
+	return newList(list), nil
+}
+
+func interpretObjectItem(n *Node, env *Environment) (res *Node, err error) {
+	obj := Object{}
 
 	curr := n
 	for curr != nil {
-		val, err := Interpret(curr.L, env)
-		if err != nil {
-			return nil, err
+		node := curr.L
+
+		switch node.Type {
+		case KVPairNT:
+			key := node.L
+			if node.L.Type != IdentifierNT {
+				var err error
+				key, err = Interpret(node.L, env)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			val, err := Interpret(node.R, env)
+			if err != nil {
+				return nil, err
+			}
+
+			obj[key.toValue()] = val
+		case SplatNT:
+			arg, err := Interpret(node.R, env)
+			if err != nil {
+				return nil, err
+			}
+
+			if arg.Type == ObjectNT {
+				for k, v := range arg.Val.(Object) {
+					obj[k] = v
+				}
+			}
 		}
 
-		key := curr.Val.(string)
-		obj[key] = val
 		curr = curr.R
 	}
 
-	return &Node{
-		Type: ObjectNT,
-		Scope: &Environment{
-			Vars: obj,
-		},
-	}, nil
+	return newObject(obj), nil
 }
 
 func interpretFieldAccess(n *Node, env *Environment) (res *Node, err error) {
-	lhs := n.L
-	rhs := n.R
+	lhs, rhs := n.L, n.R
 
 	obj, err := Interpret(lhs, env)
 	if err != nil {
@@ -1711,9 +1153,9 @@ func interpretFieldAccess(n *Node, env *Environment) (res *Node, err error) {
 	}
 
 	if obj.Type == ObjectNT {
-		val, ok := obj.Scope.Vars[rhs.Val.(string)]
+		val, ok := obj.Val.(Object)[rhs.toValue()]
 		if !ok {
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
 
 		return Interpret(val, env)
@@ -1722,155 +1164,48 @@ func interpretFieldAccess(n *Node, env *Environment) (res *Node, err error) {
 	if obj.Type == ModuleNT {
 		val, ok := obj.Scope.Consts[rhs.Val.(string)]
 		if !ok {
-			return &Node{Type: FailNT}, nil
+			return FAIL, nil
 		}
 
 		return Interpret(val, env)
 	}
 
-	return &Node{Type: FailNT}, nil
-}
-
-func importModule(n *Node, env *Environment) (res *Node, err error) {
-	top := env
-	for top.Parent != nil {
-		top = top.Parent
-	}
-
-	path := n.Val.(string)
-	file, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to import from path \"%s\": %s", path, err.Error())
-	}
-
-	ts := Scan(string(file))
-	modRoot, err := Parse(ts)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to parse module at path \"%s\": %s", path, err.Error())
-	}
-
-	modEnv := &Environment{
-		Parent: &Environment{
-			Consts: map[string]*Node{},
-		},
-		Consts: map[string]*Node{},
-		Vars:   map[string]*Node{},
-	}
-	_, err = Interpret(modRoot, modEnv)
-	if err != nil {
-		return nil, fmt.Errorf("Encountered error while importing \"%s\": %s", path, err.Error())
-	}
-
-	var modName string
-	if n.R != nil {
-		modName = n.R.Val.(string)
-	} else {
-		modName = getModuleName(path)
-	}
-
-	module := &Node{
-		Type: ModuleNT,
-		Val:  modName,
-		Scope: &Environment{
-			Consts: modEnv.Consts,
-		},
-	}
-
-	top.Consts[modName] = module
-
-	return &Node{Type: SuccessNT}, nil
-}
-
-func getModuleName(path string) string {
-	pathPieces := strings.Split(path, "/")
-	if len(pathPieces) == 0 {
-		return ""
-	}
-	filename := pathPieces[len(pathPieces)-1]
-	filenamePieces := strings.Split(filename, ".")
-	if len(filenamePieces) == 0 {
-		return ""
-	}
-	return filenamePieces[0]
-}
-
-func (n *Node) toValue() Value {
-	switch n.Type {
-	case IntNT:
-		return Value{
-			DataType: IntDT,
-			Val:      n.Val.(int64),
-		}
-	case FloatNT:
-		return Value{
-			DataType: FloatDT,
-			Val:      n.Val.(float64),
-		}
-	case StringNT:
-		return Value{
-			DataType: StringDT,
-			Val:      n.Val.(string),
-		}
-	case BoolNT:
-		return Value{
-			DataType: BoolDT,
-			Val:      n.Val.(bool),
-		}
-	case SuccessNT:
-		return Value{
-			DataType: ResultDT,
-			Val:      true,
-		}
-	case FailNT:
-		return Value{
-			DataType: ResultDT,
-			Val:      false,
-		}
-	default:
-		return Value{
-			DataType: ResultDT,
-			Val:      false,
-		}
-	}
-}
-
-func (v Value) toNode() *Node {
-	switch v.DataType {
-	case IntDT:
-		return &Node{
-			Type: IntNT,
-			Val:  v.Val.(int64),
-		}
-	case FloatDT:
-		return &Node{
-			Type: FloatNT,
-			Val:  v.Val.(float64),
-		}
-	case StringDT:
-		return &Node{
-			Type: StringNT,
-			Val:  v.Val.(string),
-		}
-	case BoolDT:
-		return &Node{
-			Type: BoolNT,
-			Val:  v.Val.(bool),
-		}
-	case ResultDT:
-		if v.Val.(bool) {
-			return &Node{Type: SuccessNT}
-		}
-		return &Node{Type: FailNT}
-	default:
-		return &Node{Type: FailNT}
-	}
+	return FAIL, nil
 }
 
 func interpretSetItem(n *Node, env *Environment) (res *Node, err error) {
-	set := map[Value]bool{}
+	set := Set{}
 
 	curr := n
 	for curr != nil {
+		// handle spread
+		if curr.L.Type == SplatNT {
+			arg, err := Interpret(curr.L.R, env)
+			if err != nil {
+				return nil, err
+			}
+
+			switch arg.Type {
+			case ListNT:
+				for _, m := range arg.Val.(List) {
+					set[m.toValue()] = true
+				}
+			case SetNT:
+				s := arg.Val.(Set)
+				for m := range s {
+					if s[m] {
+						set[m] = true
+					}
+				}
+			default:
+				set[(FAIL).toValue()] = true
+			}
+
+			curr = curr.R
+			continue
+		}
+
+		// all other set items
 		val, err := Interpret(curr.L, env)
 		if err != nil {
 			return nil, err
@@ -1880,8 +1215,5 @@ func interpretSetItem(n *Node, env *Environment) (res *Node, err error) {
 		curr = curr.R
 	}
 
-	return &Node{
-		Type: SetNT,
-		Val:  set,
-	}, nil
+	return newSet(set), nil
 }

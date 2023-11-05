@@ -64,6 +64,7 @@ var StdLib map[string]*Node = map[string]*Node{
 
 			path := args[0]
 			if path.Type != StringNT {
+				fmt.Println("path is not a string: fail")
 				return &Node{Type: FailNT}, nil
 			}
 
@@ -78,6 +79,15 @@ var StdLib map[string]*Node = map[string]*Node{
 			}, nil
 		},
 	},
+	// "readJson": {
+	// 	Type: LambdaNT,
+	// 	Func: func(_ *Environment, args ...*Node) (*Node, error) {
+	// 		if len(args) < 1 {
+	// 			return nil, fmt.Errorf("Wrong number of arguments for \"sum\". Expected 1+, received %d.", len(args))
+	// 		}
+
+	// 	},
+	// },
 	// math utils
 	"sum": {
 		Type: LambdaNT,
@@ -87,7 +97,7 @@ var StdLib map[string]*Node = map[string]*Node{
 			}
 
 			if args[0].Type == ListNT {
-				args = args[0].Val.([]*Node)
+				args = args[0].Val.(List)
 			}
 
 			allInts := true
@@ -131,7 +141,7 @@ var StdLib map[string]*Node = map[string]*Node{
 
 			if len(args) == 1 {
 				if args[0].Type == ListNT {
-					args = args[0].Val.([]*Node)
+					args = args[0].Val.(List)
 				} else {
 					return &Node{Type: FailNT}, nil
 				}
@@ -186,7 +196,7 @@ var StdLib map[string]*Node = map[string]*Node{
 
 			if len(args) == 1 {
 				if args[0].Type == ListNT {
-					args = args[0].Val.([]*Node)
+					args = args[0].Val.(List)
 				} else {
 					return &Node{Type: FailNT}, nil
 				}
@@ -258,7 +268,7 @@ var StdLib map[string]*Node = map[string]*Node{
 			}
 
 			strs := strings.Split(args[0].Val.(string), args[1].Val.(string))
-			ns := []*Node{}
+			ns := List{}
 			for _, s := range strs {
 				ns = append(ns, &Node{
 					Type: StringNT,
@@ -284,7 +294,7 @@ var StdLib map[string]*Node = map[string]*Node{
 			}
 
 			strs := []string{}
-			for _, n := range args[0].Val.([]*Node) {
+			for _, n := range args[0].Val.(List) {
 				if n.Type != StringNT {
 					return &Node{Type: FailNT}, nil
 				}
@@ -488,13 +498,13 @@ var StdLib map[string]*Node = map[string]*Node{
 				return nil, fmt.Errorf("Wrong number of arguments for \"Set\". Expected 1, received %d.", len(args))
 			}
 
-			set := map[Value]bool{}
+			set := Set{}
 
 			switch args[0].Type {
 			case SetNT:
 				return args[0], nil
 			case ListNT:
-				for _, n := range args[0].Val.([]*Node) {
+				for _, n := range args[0].Val.(List) {
 					set[n.toValue()] = true
 				}
 				return &Node{
@@ -519,7 +529,7 @@ var StdLib map[string]*Node = map[string]*Node{
 				return nil, fmt.Errorf("Wrong number of arguments for \"List\". Expected 1+, received %d.", len(args))
 			}
 
-			list := []*Node{}
+			list := List{}
 			if len(args) > 1 {
 				list = append(list, args...)
 				return &Node{
@@ -533,7 +543,7 @@ var StdLib map[string]*Node = map[string]*Node{
 				return args[0], nil
 			case SetNT:
 				{
-					set := args[0].Val.(map[Value]bool)
+					set := args[0].Val.(Set)
 					for v := range set {
 						if !set[v] {
 							continue
@@ -566,8 +576,8 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			union := map[Value]bool{}
-			a, b := args[0].Val.(map[Value]bool), args[1].Val.(map[Value]bool)
+			union := Set{}
+			a, b := args[0].Val.(Set), args[1].Val.(Set)
 			for n := range a {
 				union[n] = true
 			}
@@ -590,8 +600,8 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			intersection := map[Value]bool{}
-			a, b := args[0].Val.(map[Value]bool), args[1].Val.(map[Value]bool)
+			intersection := Set{}
+			a, b := args[0].Val.(Set), args[1].Val.(Set)
 			for n := range a {
 				if b[n] {
 					intersection[n] = true
@@ -612,8 +622,8 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			difference := map[Value]bool{}
-			a, b := args[0].Val.(map[Value]bool), args[1].Val.(map[Value]bool)
+			difference := Set{}
+			a, b := args[0].Val.(Set), args[1].Val.(Set)
 			for n := range a {
 				if !b[n] {
 					difference[n] = true
@@ -634,7 +644,7 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			set := args[0].Val.(map[Value]bool)
+			set := args[0].Val.(Set)
 			set[args[1].toValue()] = true
 
 			return &Node{
@@ -654,7 +664,7 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			set := args[0].Val.(map[Value]bool)
+			set := args[0].Val.(Set)
 			set[args[1].toValue()] = false
 
 			return &Node{
@@ -675,8 +685,8 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			keys := []*Node{}
-			for k := range args[0].Scope.Vars {
+			keys := List{}
+			for k := range args[0].Val.(Object) {
 				keys = append(keys, &Node{
 					Type: StringNT,
 					Val:  k,
@@ -697,8 +707,8 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			vals := []*Node{}
-			for _, v := range args[0].Scope.Vars {
+			vals := List{}
+			for _, v := range args[0].Val.(Object) {
 				vals = append(vals, v)
 			}
 
@@ -717,10 +727,10 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			flattened := []*Node{}
-			for _, n := range args[0].Val.([]*Node) {
+			flattened := List{}
+			for _, n := range args[0].Val.(List) {
 				if n.Type == ListNT {
-					flattened = append(flattened, n.Val.([]*Node)...)
+					flattened = append(flattened, n.Val.(List)...)
 				} else {
 					flattened = append(flattened, n)
 				}
@@ -749,7 +759,7 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			for _, n := range list.Val.([]*Node) {
+			for _, n := range list.Val.(List) {
 				call := &Node{
 					Type: CallNT,
 					L:    predicate,
@@ -788,7 +798,7 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			for i, n := range list.Val.([]*Node) {
+			for i, n := range list.Val.(List) {
 				call := &Node{
 					Type: CallNT,
 					L:    predicate,
@@ -833,7 +843,7 @@ var StdLib map[string]*Node = map[string]*Node{
 	// 			return &Node{Type: FailNT}, nil
 	// 		}
 
-	// 		for _, n := range list.Val.([]*Node) {
+	// 		for _, n := range list.Val.(List) {
 	// 			call := &Node{
 	// 				Type: CallNT,
 	// 				L:    fn,
@@ -871,7 +881,7 @@ var StdLib map[string]*Node = map[string]*Node{
 
 			return &Node{
 				Type: ListNT,
-				Val:  append(args[0].Val.([]*Node), args[1]),
+				Val:  append(args[0].Val.(List), args[1]),
 			}, nil
 		},
 	},
@@ -886,8 +896,8 @@ var StdLib map[string]*Node = map[string]*Node{
 				return &Node{Type: FailNT}, nil
 			}
 
-			list := args[0].Val.([]*Node)
-			rev := make([]*Node, len(list))
+			list := args[0].Val.(List)
+			rev := make(List, len(list))
 			for i, n := range list {
 				rev[len(list)-i-1] = n
 			}

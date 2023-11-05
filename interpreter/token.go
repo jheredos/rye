@@ -57,6 +57,8 @@ const (
 	BarEqualTT
 	PipeTT
 
+	DotDotDotTT
+
 	// Literals
 	IdentifierTT
 	StringTT
@@ -87,6 +89,9 @@ const (
 	VarTT
 	UnderscoreTT
 	IndexTT
+	FindTT
+	FoldTT
+	BindTT
 
 	ImportTT
 	AsTT
@@ -161,6 +166,7 @@ var tokenDescriptors map[TokenType]string = map[TokenType]string{
 	IndexTT:        "index",
 	ImportTT:       "import",
 	AsTT:           "as",
+	DotDotDotTT:    "...",
 }
 
 // ToString returns a string representation of a token in the form <Line#: Type "Lexeme">

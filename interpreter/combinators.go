@@ -17,6 +17,7 @@ var Then func(Parser, Parser, Nodify) Parser = func(a Parser, b Parser, n Nodify
 				}
 				return resB
 			}
+
 			return ParseRes{
 				ok:     false,
 				err:    resB.err,
@@ -142,59 +143,41 @@ var Plus func(Parser, Nodify) Parser = func(p Parser, n Nodify) Parser {
 	}
 }
 
-// Maybe = A?
-var Maybe func(Parser) Parser = func(p Parser) Parser {
-	return func(curr ParseRes, _ Nodify) ParseRes {
-		res := p(curr, nil)
-		if res.ok {
-			return res
-		}
-
-		return ParseRes{
-			ok:     true,
-			tokens: curr.tokens,
-		}
-	}
+var Wrapped func(TokenType, Parser, TokenType) Parser = func(left TokenType, target Parser, right TokenType) Parser {
+	return Then(
+		pToken(left, nil),
+		Then(
+			trim(target),
+			trim(pToken(right, nil)),
+			takeFirst,
+		),
+		takeSecond,
+	)
 }
 
-var Wrapped func(TokenType, Parser, TokenType) Parser = func(left TokenType, target Parser, right TokenType) Parser {
-	return func(curr ParseRes, _ Nodify) ParseRes {
-		if len(curr.tokens) == 0 || curr.tokens[0].Type != left {
-			return ParseRes{
-				ok:     false,
-				tokens: curr.tokens,
-			}
-		}
+var InBraces func(Parser) Parser = func(p Parser) Parser {
+	return Wrapped(LeftBraceTT, trim(p), RightBraceTT)
+}
 
-		tokens := curr.tokens[1:]
-		for len(tokens) > 0 && tokens[0].Type == NewLineTT {
-			tokens = tokens[1:]
-		}
+var InBrackets func(Parser) Parser = func(p Parser) Parser {
+	return Wrapped(LeftBracketTT, trim(p), RightBracketTT)
+}
 
-		res := target(ParseRes{
-			ok:     true,
-			tokens: tokens,
-		}, nil)
-		if !res.ok {
-			return curr
-		}
+var InParens func(Parser) Parser = func(p Parser) Parser {
+	return Wrapped(LeftParenTT, trim(p), RightParenTT)
+}
 
-		tokens = res.tokens
-		for len(tokens) > 0 && tokens[0].Type == NewLineTT {
-			tokens = tokens[1:]
-		}
-
-		if len(tokens) == 0 || tokens[0].Type != right {
-			return ParseRes{
-				ok:     false,
-				tokens: curr.tokens,
-			}
-		}
-
-		return ParseRes{
-			ok:     true,
-			tokens: tokens[1:],
-			node:   res.node,
-		}
-	}
+var CommaSeparated func(Parser) Parser = func(p Parser) Parser {
+	return ThenMaybe(
+		trim(p),
+		Plus(
+			Then(
+				pToken(CommaTT, nil),
+				trim(p),
+				takeSecond,
+			),
+			nLinked,
+		),
+		nRhs,
+	)
 }

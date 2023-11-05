@@ -22,8 +22,8 @@ func fail(message string) ParseRes {
 	}
 }
 
-// skipNewLines skips all new lines before attempting a parser
-func skipNewLines(p Parser) Parser {
+// trim skips all new lines before attempting a parser
+func trim(p Parser) Parser {
 	return func(curr ParseRes, _ Nodify) ParseRes {
 		if !curr.ok {
 			return p(curr, nil)
@@ -60,6 +60,7 @@ var operatorMap map[TokenType]NodeType = map[TokenType]NodeType{
 	PipeTT:         PipeNT,
 	MapTT:          MapNT,
 	WhereTT:        WhereNT,
+	FindTT:         FindNT,
 	IfTT:           IfNT,
 	UnlessTT:       IfNT,
 	ArrowTT:        LambdaNT,
@@ -71,6 +72,7 @@ var operatorMap map[TokenType]NodeType = map[TokenType]NodeType{
 	BreakTT:        BreakNT,
 	ContinueTT:     ContinueNT,
 	IndexTT:        IndexNT,
+	DotDotDotTT:    SplatNT,
 }
 
 // pOperator creates a parser for a binary operator, finding the appropriate node based on a token type
@@ -79,6 +81,7 @@ func pOperator(tt TokenType) Parser {
 		if !curr.ok {
 			return curr
 		}
+
 		if len(curr.tokens) == 0 {
 			return fail("Tokens exhausted")
 		}
@@ -108,6 +111,7 @@ func pOperatorUnary(tt TokenType) Parser {
 				BangTT:         LogicNotNT,
 				HashTT:         CardinalityNT,
 				QuestionMarkTT: MaybeNT,
+				DotDotDotTT:    SplatNT,
 			}[tt]
 			if !ok {
 				return fail("Unknown operator")
@@ -144,28 +148,15 @@ func pToken(tt TokenType, n Nodify) Parser {
 			return res
 		}
 		return ParseRes{
-			ok:     false,
-			err:    fmt.Sprintf("Expected %s", tt.ToString()),
+			ok: false,
+			err: fmt.Sprintf(
+				"Line %d: Parsing error. Expected %s, received %s",
+				curr.tokens[0].Line,
+				tt.ToString(),
+				curr.tokens[0].Lexeme),
 			tokens: curr.tokens,
 		}
 	}
-}
-
-var pEOF Parser = func(curr ParseRes, _ Nodify) ParseRes {
-	if len(curr.tokens) == 0 {
-		return fail("Missing EOF")
-	}
-
-	for i := 0; i < len(curr.tokens); i++ {
-		if curr.tokens[i].Type == EOFTT {
-			return ParseRes{
-				ok:     true,
-				tokens: curr.tokens[i:],
-			}
-		}
-	}
-
-	return fail("Missing EOF")
 }
 
 var assignOpMap map[TokenType]NodeType = map[TokenType]NodeType{
@@ -208,8 +199,4 @@ func pAssignOperator(tt TokenType) Parser {
 		}
 		return fail("No match")
 	}
-}
-
-var emptyParser Parser = func(res ParseRes, _ Nodify) ParseRes {
-	return res
 }

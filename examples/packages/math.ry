@@ -1,0 +1,18 @@
+pi := 3.14159
+
+sqrt := n => {
+  var prev := 10.0
+  for i in ..10:
+    prev = (prev + n / prev) / 2
+
+  prev
+}
+
+mean := sum(_) / #_
+
+stdDev := ns => {
+  avg := mean(ns)
+  dev := ns map _ - avg map _ ^ 2
+  
+  sqrt(sum(dev) / #ns)
+}

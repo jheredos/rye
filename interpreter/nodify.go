@@ -57,21 +57,8 @@ func get3Results(res []ParseRes) (res1, res2, res3 ParseRes, ok bool) {
 	return res[0], res[1], res[2], true
 }
 
-// invertFirst wraps the first result in a Not
-func invertFirst(n Nodify) Nodify {
-	return func(res ...ParseRes) *Node {
-		if len(res) >= 1 {
-			res[0].node = &Node{
-				Type: LogicNotNT,
-				R:    res[0].node,
-			}
-		}
-		return n(res...)
-	}
-}
-
-// invertFirst wraps the second result in a Not
-func invertSecond(n Nodify) Nodify {
+// negateSecond wraps the second result in a Not
+func negateSecond(n Nodify) Nodify {
 	return func(res ...ParseRes) *Node {
 		if len(res) >= 2 {
 			res[1].node = &Node{
@@ -93,17 +80,15 @@ func alterNodeType(p Parser, nt NodeType) Parser {
 	}
 }
 
-func nestNode(p Parser, nt NodeType) Parser {
+// nestLeft nests the parsed node on the left side of a node of the type provided
+func nestLeft(p Parser, nt NodeType) Parser {
 	return func(curr ParseRes, _ Nodify) ParseRes {
 		res := p(curr, nil)
 		if res.ok {
-			// fmt.Println("nestNode: ", nodeTypeMap[nt])
-			// fmt.Printf("\t%s\n", res.node.ToString())
 			res.node = &Node{
 				Type: nt,
 				L:    res.node,
 			}
-			// fmt.Printf("\t%s\n", res.node.ToString())
 		}
 		return res
 	}
@@ -128,13 +113,21 @@ func listify(p Parser) Parser {
 		if res.ok {
 			res.node = &Node{
 				Type: ListNT,
-				Val:  []*Node{res.node},
+				Val:  List{res.node},
 			}
 		}
 		return res
 	}
 }
 
+func nAlways(nt NodeType) Nodify {
+	return func(_ ...ParseRes) *Node {
+		return &Node{Type: nt}
+	}
+}
+
+// maybeFunc checks if a subtree should be converted to a function (i.e. it contains an underscore)
+// and can be (it does not contain any compound expressions or statements)
 func maybeFunc(p Parser) Parser {
 	return func(curr ParseRes, _ Nodify) ParseRes {
 		res := p(curr, nil)
@@ -192,41 +185,42 @@ func maybeFunc(p Parser) Parser {
 }
 
 // Atoms
-var nInt Nodify = func(res ...ParseRes) *Node {
-	res1, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
+var nAtom func(NodeType) Nodify = func(nt NodeType) Nodify {
+	return func(res ...ParseRes) *Node {
+		res1, ok := getParsed(res)
+		if !ok {
+			return nil
+		}
 
-	val, _ := strconv.ParseInt(res1.parsed.Lexeme, 10, 64)
-	return &Node{
-		Type: IntNT,
-		Val:  val,
-	}
-}
+		var val interface{}
+		switch nt {
+		case IntNT:
+			val, _ = strconv.ParseInt(res1.parsed.Lexeme, 10, 64)
+		case FloatNT:
+			val, _ = strconv.ParseFloat(res1.parsed.Lexeme, 64)
+		case IdentifierNT:
+			val = res1.parsed.Lexeme
+		case BoolNT:
+			if res1.parsed.Lexeme == "true" {
+				val = true
+			} else {
+				val = false
+			}
+		case StringNT:
+			val = res1.parsed.Lexeme
+		case UnderscoreNT:
+			val = "_"
+		case IndexNT:
+			val = "index"
+		case NullNT, FailNT, SuccessNT:
+			val = nil
+		}
 
-var nFloat Nodify = func(res ...ParseRes) *Node {
-	res1, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	val, _ := strconv.ParseFloat(res1.parsed.Lexeme, 64)
-	return &Node{
-		Type: FloatNT,
-		Val:  val,
-	}
-}
-
-var nIdentifier Nodify = func(res ...ParseRes) *Node {
-	res1, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: IdentifierNT,
-		Val:  res1.parsed.Lexeme,
+		return &Node{
+			Type: nt,
+			Val:  val,
+			Line: res1.parsed.Line,
+		}
 	}
 }
 
@@ -240,93 +234,6 @@ var nParam Nodify = func(res ...ParseRes) *Node {
 		Type: ParamNT,
 		Val:  res1.parsed.Lexeme,
 	}
-}
-
-var nString Nodify = func(res ...ParseRes) *Node {
-	res1, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: StringNT,
-		Val:  res1.parsed.Lexeme,
-	}
-}
-
-var nTrue Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: BoolNT,
-		Val:  true,
-	}
-}
-
-var nFalse Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: BoolNT,
-		Val:  false,
-	}
-}
-
-var nNull Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: NullNT,
-	}
-}
-
-var nFail Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: FailNT,
-	}
-}
-
-var nSuccess Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{
-		Type: SuccessNT,
-	}
-}
-
-var nUnderscore Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{Type: UnderscoreNT, Val: "_"}
-}
-
-var nIndex Nodify = func(res ...ParseRes) *Node {
-	_, ok := getParsed(res)
-	if !ok {
-		return nil
-	}
-
-	return &Node{Type: IndexNT, Val: "index"}
 }
 
 var nSlice Nodify = func(res ...ParseRes) *Node {
@@ -362,13 +269,13 @@ var nKVPair Nodify = func(res ...ParseRes) *Node {
 
 	return &Node{
 		Type: KVPairNT,
-		Val:  k.node.Val.(string),
-		L:    v.node,
+		L:    k.node,
+		R:    v.node,
 	}
 }
 
 var nObject Nodify = func(res ...ParseRes) *Node {
-	return &Node{Type: ObjectNT}
+	return &Node{Type: ObjectNT, Val: Object{}}
 }
 
 var nImport Nodify = func(res ...ParseRes) *Node {
@@ -391,25 +298,9 @@ var nUnaryPre Nodify = func(res ...ParseRes) *Node {
 		return nil
 	}
 
-	switch op.node.Type {
-	case UnaryNegNT:
-		return &Node{
-			Type: op.node.Type,
-			R:    rhs.node,
-		}
-	case LogicNotNT:
-		return &Node{
-			Type: op.node.Type,
-			R:    rhs.node,
-		}
-	case CardinalityNT:
-		return &Node{
-			Type: op.node.Type,
-			R:    rhs.node,
-		}
-	default:
-		fmt.Println("nUnaryPre failed")
-		return nil
+	return &Node{
+		Type: op.node.Type,
+		R:    rhs.node,
 	}
 }
 
@@ -421,46 +312,13 @@ var nUnaryPost Nodify = func(res ...ParseRes) *Node {
 		return nil
 	}
 
-	switch op.node.Type {
-	case MaybeNT:
-		return &Node{
-			Type: op.node.Type,
-			R:    lhs.node,
-		}
-	default:
-		fmt.Println("nUnaryPost failed")
-		return nil
-	}
-}
-
-var nNegative Nodify = func(res ...ParseRes) *Node {
-	_, rhs, ok := get2Results(res)
-	if !ok {
-		fmt.Println("nNegative failed :(")
-		return nil
-	}
-
-	switch rhs.node.Type {
-	case FloatNT:
-		return &Node{
-			Type: FloatNT,
-			Val:  -rhs.node.Val.(float64),
-		}
-	case IntNT:
-		return &Node{
-			Type: IntNT,
-			Val:  -rhs.node.Val.(int64),
-		}
-	default:
-		return &Node{
-			Type: UnaryNegNT,
-			R:    rhs.node,
-		}
+	return &Node{
+		Type: op.node.Type,
+		R:    lhs.node,
 	}
 }
 
 // Binary
-
 var nRhs Nodify = func(res ...ParseRes) *Node {
 
 	//									A
@@ -469,25 +327,15 @@ var nRhs Nodify = func(res ...ParseRes) *Node {
 
 	op, rhs, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nRhs failed :( (bad results)")
+		fmt.Println("nRhs failed :(")
 		return nil
 	}
 
-	switch op.node.Type {
-	case LogicOrNT, LogicAndNT, EqualNT, NotEqualNT, LessNT, LessEqualNT, GreaterNT, GreaterEqualNT, AddNT, SubtNT, MultNT, DivNT, ModuloNT, FallbackNT, PowerNT, ParamNT, LambdaNT, MapNT, WhereNT, PipeNT, VarDeclNT, ConstDeclNT, IfNT, WhileStmtNT, ForStmtNT, CallNT, ArgNT, SliceNT, KVPairNT, ImportNT, SetItemNT, InNT, IdentifierNT:
-		// fmt.Printf("op:      %s\n", op.node.ToString())
-		// fmt.Printf("rhs:     %s\n", rhs.node.ToString())
-		n := &Node{
-			Type: op.node.Type,
-			Val:  op.node.Val,
-			L:    op.node.L,
-			R:    rhs.node,
-		}
-		// fmt.Printf("result:  %s\n", n.ToString())
-		return n
-	default:
-		fmt.Println("nRhs failed :( (unknown node type)")
-		return nil
+	return &Node{
+		Type: op.node.Type,
+		Val:  op.node.Val,
+		L:    op.node.L,
+		R:    rhs.node,
 	}
 }
 
@@ -499,21 +347,13 @@ var nLhs Nodify = func(res ...ParseRes) *Node {
 
 	a, b, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nLhs failed :( (bad results)")
+		fmt.Println("nLhs failed :(")
 		return nil
 	}
 
-	switch a.node.Type {
-	case IfNT, WhileStmtNT, ForStmtNT:
-		n := &Node{
-			Type: a.node.Type,
-			L:    b.node,
-		}
-
-		return n
-	default:
-		fmt.Println("nLhs failed :( (unknown node type)")
-		return nil
+	return &Node{
+		Type: a.node.Type,
+		L:    b.node,
 	}
 }
 
@@ -525,22 +365,14 @@ var nBinary Nodify = func(res ...ParseRes) *Node {
 
 	lhs, rest, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nBinary failed :( (bad results)")
+		fmt.Println("nBinary failed :(")
 		return nil
 	}
 
-	switch rest.node.Type {
-	case LogicOrNT, LogicAndNT, EqualNT, NotEqualNT, LessNT, LessEqualNT, GreaterNT, GreaterEqualNT, AddNT, SubtNT, MultNT, DivNT, ModuloNT, FallbackNT, PowerNT, LambdaNT, ConstDeclNT, VarDeclNT:
-		n := &Node{
-			Type: rest.node.Type,
-			L:    lhs.node,
-			R:    rest.node.R,
-		}
-		// fmt.Printf("nBinary: %s\n", n.ToString())
-		return n
-	default:
-		fmt.Println("nBinary failed :( (unknown node type)")
-		return nil
+	return &Node{
+		Type: rest.node.Type,
+		L:    lhs.node,
+		R:    rest.node.R,
 	}
 }
 
@@ -556,17 +388,10 @@ var nBinaryFlip Nodify = func(res ...ParseRes) *Node {
 		return nil
 	}
 
-	switch op.node.Type {
-	case IfNT:
-		n := &Node{
-			Type: op.node.Type,
-			L:    op.node.L,
-			R:    rhs.node,
-		}
-		return n
-	default:
-		fmt.Println("nBinaryFlip failed :(")
-		return nil
+	return &Node{
+		Type: op.node.Type,
+		L:    op.node.L,
+		R:    rhs.node,
 	}
 }
 
@@ -591,7 +416,7 @@ var nElse Nodify = func(res ...ParseRes) *Node {
 		Type: IfNT,
 		L:    ifNode.L, // the condition
 		R: &Node{
-			Type: ThenNT,
+			Type: ThenBranchNT,
 			L:    ifNode.R, // the then branch
 			R:    fallback, // the else branch
 		},
@@ -601,30 +426,25 @@ var nElse Nodify = func(res ...ParseRes) *Node {
 var nAssignmentRhs Nodify = func(res ...ParseRes) *Node {
 	op, rhs, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nAssignmentRhs failed :( (bad results)")
+		fmt.Println("nAssignmentRhs failed :(")
 		return nil
 	}
 
-	// compound assignment
+	// compound assignment (+=, -=, etc.)
 	if op.node.R != nil {
 		op.node.R.R = rhs.node
 		return op.node
 	}
 
 	// simple assignment
-	if op.node.Type == AssignmentNT {
-		op.node.R = rhs.node
-		return op.node
-	}
-
-	fmt.Println("nAssignmentRhs failed :( (unknown node type)")
-	return nil
+	op.node.R = rhs.node
+	return op.node
 }
 
 var nAssignment Nodify = func(res ...ParseRes) *Node {
 	target, op, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nAssignment failed :( (bad results)")
+		fmt.Println("nAssignment failed :(")
 		return nil
 	}
 
@@ -632,11 +452,10 @@ var nAssignment Nodify = func(res ...ParseRes) *Node {
 	switch op.node.R.Type {
 	case SubtNT, AddNT, DivNT, MultNT, ModuloNT, FallbackNT:
 		// compound assignment
-		if op.node.R.L == nil {
-			op.node.R.L = target.node
-		}
+		op.node.R.L = target.node
 	}
 
+	op.node.Line = op.tokens[0].Line
 	return op.node
 }
 
@@ -651,31 +470,22 @@ var nRightAssoc Nodify = func(res ...ParseRes) *Node {
 
 	prev, rhs, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nRightAssoc failed :( (bad results)")
+		fmt.Println("nRightAssoc failed :(")
 		return nil
 	}
 
-	switch rhs.node.Type {
-	case PowerNT, LambdaNT:
-		// fmt.Printf("nRightAssoc:\n")
-		// fmt.Printf("\tprev:   %s\n", prev.node.ToString())
-		// fmt.Printf("\trhs:    %s\n", rhs.node.ToString())
-		o1 := prev.node
-		r1 := prev.node.R
-		o2 := rhs.node
-		r2 := rhs.node.R
+	o1 := prev.node
+	r1 := prev.node.R
+	o2 := rhs.node
+	r2 := rhs.node.R
 
-		o1.R = &Node{
-			Type: o2.Type,
-			L:    r1,
-			R:    r2,
-		}
-		// fmt.Printf("result: \t%s\n\n", o1.ToString())
-		return o1.R
-	default:
-		fmt.Println("nRightAssoc failed :( (unknown node type)")
-		return nil
+	o1.R = &Node{
+		Type: o2.Type,
+		L:    r1,
+		R:    r2,
 	}
+
+	return o1.R
 }
 
 // nLeftAssoc expects 2 result structs: the previous result and the rhs
@@ -689,25 +499,15 @@ var nLeftAssoc Nodify = func(res ...ParseRes) *Node {
 
 	prev, rhs, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nLeftAssoc failed :( (bad results)")
+		fmt.Println("nLeftAssoc failed :(")
 		return nil
 	}
 
-	switch rhs.node.Type {
-	case LogicOrNT, LogicAndNT, EqualNT, NotEqualNT, LessNT, LessEqualNT, GreaterNT, GreaterEqualNT, AddNT, SubtNT, MultNT, DivNT, ModuloNT, FallbackNT, MapNT, WhereNT, PipeNT, CallNT, BracketAccessNT, FieldAccessNT, SliceNT, ListSliceNT:
-		// fmt.Printf("nLeftAssoc:\n")
-		// fmt.Printf("\tprev:   %s\n", prev.node.ToString())
-		// fmt.Printf("\trhs:    %s\n", rhs.node.ToString())
-		o1 := prev.node
-		o2 := rhs.node
+	o1 := prev.node
+	o2 := rhs.node
+	o2.L = o1
 
-		o2.L = o1
-		// fmt.Printf("result: \t%s\n\n", o2.ToString())
-		return o2
-	default:
-		fmt.Printf("nLeftAssoc failed :( (unknown node type \"%s\")\n", nodeTypeMap[rhs.node.Type])
-		return nil
-	}
+	return o2
 }
 
 // nEndLeftAssoc traverses the left-side of a left-associative tree to append its leftmost argument, returning the root
@@ -746,21 +546,7 @@ var nLinked Nodify = func(res ...ParseRes) *Node {
 	}
 	n.R = next.node
 
-	// fmt.Println("nLinked", curr.node.ToString())
 	return curr.node
-}
-
-var nStmt Nodify = func(res ...ParseRes) *Node {
-	if len(res) < 1 || !res[0].ok {
-		fmt.Println("nStmt failed :(")
-		return nil
-	}
-
-	// fmt.Printf("%s\n", res[0].node.ToString())
-	return &Node{
-		Type: StmtNT,
-		L:    res[0].node,
-	}
 }
 
 // nUnaryNested combines an inner unary operation with an outer
@@ -783,15 +569,14 @@ var nUnaryNested Nodify = func(res ...ParseRes) *Node {
 var nEmptyList Nodify = func(res ...ParseRes) *Node {
 	return &Node{
 		Type: ListNT,
-		Val:  []*Node{},
+		Val:  List{},
 	}
 }
 
 var nListHead Nodify = func(res ...ParseRes) *Node {
-	// fmt.Println("nListHead")
 	head, tail, ok := get2Results(res)
 	if !ok {
-		fmt.Println("nListHead failed :( (bad results)")
+		fmt.Println("nListHead failed :(")
 		return nil
 	}
 
@@ -801,15 +586,14 @@ var nListHead Nodify = func(res ...ParseRes) *Node {
 	}
 
 	if tail.node.Type != ListNT {
-		h := head.node.Val.([]*Node)
+		h := head.node.Val.(List)
 		return &Node{
 			Type: ListNT,
 			Val:  append(h, tail.node),
 		}
 	}
 
-	// fmt.Println("there are 2 lists, all good\n")
-	h, t := head.node.Val.([]*Node), tail.node.Val.([]*Node)
+	h, t := head.node.Val.(List), tail.node.Val.(List)
 
 	return &Node{
 		Type: ListNT,
@@ -825,18 +609,17 @@ var nListTail Nodify = func(res ...ParseRes) *Node {
 	}
 
 	if prev.node.Type == ListNT {
-		list := prev.node.Val.([]*Node)
-		list = append(list, curr.node)
+		list := prev.node.Val.(List)
 
 		return &Node{
 			Type: ListNT,
-			Val:  list,
+			Val:  append(list, curr.node),
 		}
 	}
 
 	return &Node{
 		Type: ListNT,
-		Val:  []*Node{prev.node, curr.node},
+		Val:  List{prev.node, curr.node},
 	}
 }
 

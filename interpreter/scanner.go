@@ -43,7 +43,6 @@ func scan(scanned []Token, remaining string, line int) []Token {
 		if tt, ok := scanTwoRune(r, remaining[1]); ok {
 			if tt == CommentTT {
 				remaining = scanComment(remaining)
-				scanned = append(scanned, Token{NewLineTT, line, ""})
 				return scan(scanned, remaining, line)
 			}
 			scanned = append(scanned, Token{tt, line, string(r) + string(remaining[1])})
@@ -59,6 +58,11 @@ func scan(scanned []Token, remaining string, line int) []Token {
 		if len(remaining) > 1 {
 			n := remaining[1]
 			if n == '.' {
+				// ...
+				if len(remaining) > 2 && remaining[2] == '.' {
+					scanned = append(scanned, Token{DotDotDotTT, line, "..."})
+					return scan(scanned, remaining[3:], line)
+				}
 				// ..
 				scanned = append(scanned, Token{DotDotTT, line, string(r) + string(n)})
 				return scan(scanned, remaining[2:], line)
@@ -122,22 +126,23 @@ func scan(scanned []Token, remaining string, line int) []Token {
 
 func scanTwoRune(a byte, b byte) (TokenType, bool) {
 	twoRunes := map[string]TokenType{
-		"=>": ArrowTT,
-		"<-": LeftArrowTT,
-		"!=": BangEqualTT,
-		"==": EqualEqualTT,
-		">=": GreaterEqualTT,
-		"<=": LessEqualTT,
-		":=": ColonEqualTT,
-		"-=": MinusEqualTT,
-		"+=": PlusEqualTT,
-		"/=": SlashEqualTT,
-		"*=": StarEqualTT,
-		"%=": ModuloEqualTT,
-		"..": DotDotTT,
-		"//": CommentTT,
-		"|=": BarEqualTT,
-		"|>": PipeTT,
+		"=>":  ArrowTT,
+		"<-":  LeftArrowTT,
+		"!=":  BangEqualTT,
+		"==":  EqualEqualTT,
+		">=":  GreaterEqualTT,
+		"<=":  LessEqualTT,
+		":=":  ColonEqualTT,
+		"-=":  MinusEqualTT,
+		"+=":  PlusEqualTT,
+		"/=":  SlashEqualTT,
+		"*=":  StarEqualTT,
+		"%=":  ModuloEqualTT,
+		"..":  DotDotTT,
+		"...": DotDotDotTT,
+		"//":  CommentTT,
+		"|=":  BarEqualTT,
+		"|>":  PipeTT,
 	}
 	tt, ok := twoRunes[string(a)+string(b)]
 	return tt, ok
@@ -156,7 +161,7 @@ func scanOneRune(r byte) (TokenType, bool) {
 		'.': DotTT,
 		'-': MinusTT,
 		'+': PlusTT,
-		';': SemicolonTT,
+		';': NewLineTT,
 		'/': SlashTT,
 		'*': StarTT,
 		'%': ModuloTT,
@@ -222,6 +227,9 @@ func scanKeyword(s string) (TokenType, bool) {
 		"import":   ImportTT,
 		"as":       AsTT,
 		"then":     PipeTT,
+		"find":     FindTT,
+		"fold":     FoldTT,
+		"bind":     PipeTT, //BindTT,
 	}
 	tt, ok := keywords[s]
 	return tt, ok

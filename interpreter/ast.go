@@ -8,9 +8,14 @@ type Node struct {
 	Func
 	L, R  *Node
 	Scope *Environment
+	Line  int
 }
 
 type Func func(*Environment, ...*Node) (*Node, error)
+
+type List []*Node
+type Set map[Value]bool
+type Object map[Value]*Node
 
 type Value struct {
 	DataType
@@ -51,7 +56,7 @@ const (
 	ContinueNT
 	ExprNT
 	IfNT
-	ThenNT
+	ThenBranchNT
 	AssignmentNT
 	LambdaNT
 	ParamNT
@@ -73,6 +78,9 @@ const (
 	MapNT
 	WhereNT
 	PipeNT
+	FindNT
+	FoldNT
+	BindNT
 	InNT
 	PowerNT
 	UnderscoreNT
@@ -80,16 +88,17 @@ const (
 	SliceNT
 	KVPairNT
 	SetItemNT
+	ObjectItemNT
 
 	LogicNotNT
 	UnaryNegNT
 	CardinalityNT
 	MaybeNT
+	SplatNT
 
 	ListNT
 	SetNT
 	ObjectNT
-	ObjectLiteralNT
 
 	SuccessNT
 	FailNT
@@ -118,6 +127,78 @@ type Environment struct {
 	Consts map[string]*Node
 }
 
+func (n *Node) toValue() Value {
+	switch n.Type {
+	case IntNT:
+		return Value{
+			DataType: IntDT,
+			Val:      n.Val.(int64),
+		}
+	case FloatNT:
+		return Value{
+			DataType: FloatDT,
+			Val:      n.Val.(float64),
+		}
+	case StringNT, IdentifierNT:
+		return Value{
+			DataType: StringDT,
+			Val:      n.Val.(string),
+		}
+	case BoolNT:
+		return Value{
+			DataType: BoolDT,
+			Val:      n.Val.(bool),
+		}
+	case SuccessNT:
+		return Value{
+			DataType: ResultDT,
+			Val:      true,
+		}
+	case FailNT:
+		return Value{
+			DataType: ResultDT,
+			Val:      false,
+		}
+	default:
+		return Value{
+			DataType: ResultDT,
+			Val:      false,
+		}
+	}
+}
+
+func (v Value) toNode() *Node {
+	switch v.DataType {
+	case IntDT:
+		return &Node{
+			Type: IntNT,
+			Val:  v.Val.(int64),
+		}
+	case FloatDT:
+		return &Node{
+			Type: FloatNT,
+			Val:  v.Val.(float64),
+		}
+	case StringDT:
+		return &Node{
+			Type: StringNT,
+			Val:  v.Val.(string),
+		}
+	case BoolDT:
+		return &Node{
+			Type: BoolNT,
+			Val:  v.Val.(bool),
+		}
+	case ResultDT:
+		if v.Val.(bool) {
+			return &Node{Type: SuccessNT}
+		}
+		return &Node{Type: FailNT}
+	default:
+		return &Node{Type: FailNT}
+	}
+}
+
 var nodeTypeMap map[NodeType]string = map[NodeType]string{
 	ProgramNT:       "program",
 	LineNT:          "line",
@@ -130,7 +211,7 @@ var nodeTypeMap map[NodeType]string = map[NodeType]string{
 	ForStmtNT:       "for",
 	ExprNT:          "expr",
 	IfNT:            "if",
-	ThenNT:          "then",
+	ThenBranchNT:    "then-branch",
 	AssignmentNT:    "=",
 	LambdaNT:        "lambda",
 	ParamNT:         "param",
@@ -151,15 +232,14 @@ var nodeTypeMap map[NodeType]string = map[NodeType]string{
 	ModuloNT:        "%",
 	LogicNotNT:      "!",
 	UnaryNegNT:      "-",
-	ListNT:          "LIST",
-	SetNT:           "SET",
-	ObjectNT:        "OBJ",
-	ObjectLiteralNT: "OBJ",
+	ListNT:          "list",
+	SetNT:           "set",
+	ObjectNT:        "obj",
 	SuccessNT:       "success",
 	FailNT:          "fail",
 	CallNT:          "call",
 	RangeNT:         "range",
-	BracketAccessNT: "list-access",
+	BracketAccessNT: "bracket-access",
 	FieldAccessNT:   "field-access",
 	IdentifierNT:    "IDENT",
 	FloatNT:         "FLOAT",
@@ -185,26 +265,38 @@ var nodeTypeMap map[NodeType]string = map[NodeType]string{
 	SetItemNT:       "set-item",
 	ImportNT:        "import",
 	ModuleNT:        "module",
+	SplatNT:         "...",
+	ObjectItemNT:    "object-item",
+	FindNT:          "find",
+	FoldNT:          "fold",
+}
+
+func (nt NodeType) ToString() string {
+	return nodeTypeMap[nt]
 }
 
 func unOp2String(n *Node) string {
-	return fmt.Sprintf("(%s %s)", nodeTypeMap[n.Type], n.R.ToString())
+	return fmt.Sprintf("(%s %s)", n.Type.ToString(), n.R.ToString())
 }
 
 func binOp2String(n *Node) string {
-	return fmt.Sprintf("(%s %s %s)", nodeTypeMap[n.Type], n.L.ToString(), n.R.ToString())
+	return fmt.Sprintf("(%s %s %s)", n.Type.ToString(), n.L.ToString(), n.R.ToString())
 }
 
 func linked2String(n *Node) string {
+	if n.L == nil && n.R == nil {
+		return fmt.Sprintf("(%s)", n.Type.ToString())
+	}
+
 	if n.L == nil {
-		return fmt.Sprintf("(%s %s)", nodeTypeMap[n.Type], n.R.ToString())
+		return fmt.Sprintf("(%s %s)", n.Type.ToString(), n.R.ToString())
 	}
 
 	if n.R == nil {
-		return fmt.Sprintf("(%s %s)", nodeTypeMap[n.Type], n.L.ToString())
+		return fmt.Sprintf("(%s %s)", n.Type.ToString(), n.L.ToString())
 	}
 
-	return fmt.Sprintf("(%s %s %s)", nodeTypeMap[n.Type], n.L.ToString(), n.R.ToString())
+	return fmt.Sprintf("(%s %s %s)", n.Type.ToString(), n.L.ToString(), n.R.ToString())
 }
 
 func Display(n *Node) string {
@@ -212,7 +304,7 @@ func Display(n *Node) string {
 		return "NIL_PTR"
 	}
 	switch n.Type {
-	case FloatNT, IntNT, CharNT, BoolNT, IdentifierNT, ObjectLiteralNT, StringNT, ListNT, ObjectNT, SetNT, NullNT, UnderscoreNT, FailNT, SuccessNT:
+	case FloatNT, IntNT, CharNT, BoolNT, IdentifierNT, StringNT, ListNT, ObjectNT, SetNT, NullNT, UnderscoreNT, FailNT, SuccessNT:
 		return n.ToString()
 	case LambdaNT:
 		return "<lambda>"
@@ -227,12 +319,12 @@ func (n *Node) ToString() string {
 	}
 	switch n.Type {
 	// atoms
-	case FloatNT, IntNT, CharNT, BoolNT, IdentifierNT, ObjectLiteralNT:
+	case FloatNT, IntNT, CharNT, BoolNT, IdentifierNT:
 		return fmt.Sprintf("%v", n.Val)
 	case StringNT:
 		return fmt.Sprintf("\"%v\"", n.Val)
 	case ListNT:
-		list := n.Val.([]*Node)
+		list := n.Val.(List)
 		res := "["
 		for i, m := range list {
 			if i > 0 {
@@ -243,20 +335,20 @@ func (n *Node) ToString() string {
 		res += "]"
 		return res
 	case ObjectNT:
-		obj := n.Scope.Vars
+		obj := n.Val.(Object)
 		res := "{"
 		for k, v := range obj {
 			if len(res) > 1 {
 				res += ", "
 			}
-			res += k
+			res += k.toNode().ToString()
 			res += ": "
 			res += v.ToString()
 		}
 		res += "}"
 		return res
 	case SetNT:
-		set := n.Val.(map[Value]bool)
+		set := n.Val.(Set)
 		res := "{"
 		for k := range set {
 			if !set[k] {
@@ -280,7 +372,7 @@ func (n *Node) ToString() string {
 	case IndexNT:
 		return "index"
 	case BreakNT, ContinueNT:
-		return nodeTypeMap[n.Type]
+		return n.Type.ToString()
 	case ModuleNT:
 		return fmt.Sprintf("(module %s)", n.Val.(string))
 	case ImportNT:
@@ -294,12 +386,12 @@ func (n *Node) ToString() string {
 		}
 		return fmt.Sprintf("\n%s", n.L.ToString())
 	// unary
-	case UnaryNegNT, LogicNotNT, CardinalityNT, MaybeNT, ReturnStmtNT:
+	case UnaryNegNT, LogicNotNT, CardinalityNT, MaybeNT, ReturnStmtNT, SplatNT:
 		return unOp2String(n)
 	// binary
-	case MultNT, DivNT, AddNT, SubtNT, ModuloNT, NotEqualNT, EqualNT, GreaterNT, GreaterEqualNT, LessNT, LessEqualNT, FallbackNT, LogicOrNT, LogicAndNT, MapNT, WhereNT, InNT, PowerNT, IfNT, ThenNT, LambdaNT, PipeNT, AssignmentNT, VarDeclNT, ConstDeclNT, WhileStmtNT, ForStmtNT, CallNT, BracketAccessNT, ListSliceNT, FieldAccessNT, RangeNT, SliceNT:
+	case MultNT, DivNT, AddNT, SubtNT, ModuloNT, NotEqualNT, EqualNT, GreaterNT, GreaterEqualNT, LessNT, LessEqualNT, FallbackNT, LogicOrNT, LogicAndNT, MapNT, WhereNT, InNT, PowerNT, IfNT, ThenBranchNT, LambdaNT, PipeNT, AssignmentNT, VarDeclNT, ConstDeclNT, WhileStmtNT, ForStmtNT, CallNT, BracketAccessNT, ListSliceNT, FieldAccessNT, RangeNT, SliceNT, KVPairNT, FindNT, FoldNT:
 		return binOp2String(n)
-	case ParamNT, ArgNT, KVPairNT, SetItemNT:
+	case ParamNT, ArgNT, SetItemNT, ObjectItemNT:
 		return linked2String(n)
 
 	default:

@@ -1,0 +1,22 @@
+import "./packages/math.ry"
+
+// Estimates π, importing a `sqrt` function from math.ry
+
+// Randomly chooses 10,000 points in a 2x2 square. The proportion that fall in 
+// the unit circle approaches π / 4
+
+inUnitCircle := (x,y) => math.sqrt(x^2 + y^2) < 1
+
+var hits := 0.0
+iterations := 10000
+
+for i in ..iterations {
+  x := random() * 2 - 1
+  y := random() * 2 - 1
+
+  if inUnitCircle(x,y): 
+    hits += 1
+}
+
+result := hits / iterations
+print("result:", result * 4)

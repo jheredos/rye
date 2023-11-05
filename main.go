@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jheredos/rye/interpreter"
 )
@@ -22,6 +23,15 @@ func runFile(path string) {
 	file, err := os.ReadFile(path) // read file
 	if err != nil {
 		panic(err)
+	}
+
+	dirs := strings.Split(path, "/")
+	pwd := strings.Join(dirs[:len(dirs)-1], "/")
+	err = os.Chdir(pwd)
+
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
 
 	// scan...
@@ -45,7 +55,6 @@ func runFile(path string) {
 		Consts: map[string]*interpreter.Node{},
 		Vars:   map[string]*interpreter.Node{},
 	}
-	// env.Parent.Consts[".FILEPATH"] =
 	_, err = interpreter.Interpret(root, env)
 	if err != nil {
 		fmt.Println(err)
@@ -73,6 +82,9 @@ func runPrompt() {
 		if err != nil {
 			fmt.Println(err)
 			continue
+		}
+		for _, t := range ts {
+			fmt.Println(t.ToString())
 		}
 
 		// parse...

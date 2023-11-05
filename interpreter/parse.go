@@ -3,8 +3,8 @@ package interpreter
 import "fmt"
 
 // Primaries and atoms
-var pPrimary, pPrimaryRhs, pAtom, pCall, pGroup Parser
-var pList, pListItems, pEmptyList, pObject, pObjectItems, pKVPair, pSet, pSetItems Parser
+var pPrimary, pPrimaryRhs, pAtom, pCollection, pIdentifier, pCall, pGroup Parser
+var pList, pListItem, pListItems, pSplatExpr, pEmptyList, pObject, pObjectItems, pObjectItem, pKVPair, pSet, pSetItem, pSetItems Parser
 var pArgs, pCallRhs, pBracketAccess, pListSlice, pSlice, pFieldAccess Parser
 
 // Unary expressions (and power)
@@ -24,15 +24,18 @@ var pConjunction, pConjunctionRhs, pDisjunction, pDisjunctionRhs, pInExpr, pInEx
 // Conditional
 var pCondExpr, pCondElseExpr, pCondRhs, pIfRhs, pUnlessRhs, pElseRhs Parser
 
+// Match
+// var pMatchExpr Parser
+
 // Lambdas
-var pLambda, pLambdaRhs, pEmptyParams, pParenParams, pParams, pParam, pSingleParam, pParamsRhs Parser
+var pLambda, pLambdaRhs, pEmptyParams, pParams, pParam Parser
 var pParamDestruc, pListDestruc, pObjDestruc, pObjPairDestruc Parser
 
 // Simple expressions
 var pExpr, pSimpleExpr Parser
 
 // Compound expressions
-var pCompoundExpr, pCompoundExprRhs, pMapExprRhs, pWhereExprRhs, pPipeExprRhs, pCompoundExprArg Parser
+var pCompoundExpr, pCompoundExprRhs, pMapExprRhs, pWhereExprRhs, pPipeExprRhs, pFindExprRhs, pCompoundExprArg Parser
 
 // Statements
 var pCompoundStmt, pSimpleStmt, pStmtBody, pStmt, pStmts Parser
@@ -48,46 +51,40 @@ func init() {
 
 	// Simple expressions
 	// Primaries and atoms
-	pGroup = Then(
-		Then(
-			pToken(LeftParenTT, nil),
-			// This nonsense deals with circular dependencies. Passing the Parser itself, before defining, will pass nil
-			func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) },
-			takeSecond),
-		pToken(RightParenTT, nil),
-		takeFirst)
+	pIdentifier = pToken(IdentifierTT, nAtom(IdentifierNT))
+	// This nonsense deals with circular dependencies. Passing the Parser itself, before defining, will pass nil
+	pGroup = InParens(func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) })
 
 	// Collections
 	// Lists
+	pSplatExpr = Then(pOperatorUnary(DotDotDotTT), func(r ParseRes, n Nodify) ParseRes { return pPrimary(r, n) }, nUnaryPre)
+	pListItem = Choice(pSplatExpr, func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) })
 	pListItems = ThenMaybe(
-		listify(func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) }),
+		listify(pListItem),
 		Plus(
 			Then(
 				pToken(CommaTT, nil),
-				func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) },
+				trim(pListItem),
 				takeSecond,
 			), nListTail),
 		nListHead,
 	)
 	pEmptyList = Then(
 		pToken(LeftBracketTT, nil),
-		pToken(RightBracketTT, nil),
+		trim(pToken(RightBracketTT, nil)),
 		nEmptyList,
 	)
 	pList = Choice(
 		pEmptyList,
-		Wrapped(
-			LeftBracketTT,
-			pListItems,
-			RightBracketTT,
-		),
+		InBrackets(pListItems),
 	)
 
 	// Objects
 	pKVPair = Then(
 		Choice(
-			pToken(IdentifierTT, nIdentifier),
-			pToken(StringTT, nString),
+			pIdentifier,
+			pToken(StringTT, nAtom(StringNT)),
+			pGroup,
 		),
 		Then(
 			pToken(ColonTT, nil),
@@ -96,88 +93,49 @@ func init() {
 		),
 		nKVPair,
 	)
-	pObjectItems = ThenMaybe(
-		skipNewLines(pKVPair),
-		Plus(
-			Then(
-				pToken(CommaTT, nil),
-				skipNewLines(pKVPair),
-				takeSecond,
-			),
-			nLinked,
-		),
-		nRhs,
-	)
+	pObjectItem = nestLeft(Choice(pSplatExpr, pKVPair), ObjectItemNT)
+	pObjectItems = CommaSeparated(pObjectItem)
 	pObject = Choice(
-		Then(pToken(LeftBraceTT, nil), skipNewLines(pToken(RightBraceTT, nil)), nObject),
-		Then(
-			pToken(LeftBraceTT, nil),
-			Then(
-				pObjectItems,
-				skipNewLines(pToken(RightBraceTT, nil)),
-				takeFirst,
-			),
-			takeSecond,
-		),
+		Then(pToken(LeftBraceTT, nil), trim(pToken(RightBraceTT, nil)), nObject),
+		InBraces(pObjectItems),
 	)
 
 	// Set
-	pSetItems = ThenMaybe(
-		nestNode(func(r ParseRes, n Nodify) ParseRes { return pSimpleExpr(r, n) }, SetItemNT),
-		Plus(
-			Then(
-				pToken(CommaTT, nil),
-				skipNewLines(nestNode(func(r ParseRes, n Nodify) ParseRes { return pSimpleExpr(r, n) }, SetItemNT)),
-				takeSecond,
-			),
-			nLinked,
-		),
-		nRhs,
-	)
-	pSet = Then(
-		pToken(LeftBraceTT, nil),
-		Then(
-			pSetItems,
-			skipNewLines(pToken(RightBraceTT, nil)),
-			takeFirst,
-		),
-		takeSecond,
-	)
+	pSetItem = Choice(pSplatExpr, func(r ParseRes, n Nodify) ParseRes { return pSimpleExpr(r, n) })
+	pSetItems = CommaSeparated(nestLeft(pSetItem, SetItemNT))
+	pSet = InBraces(pSetItems)
 
 	pAtom = Choice(
-		pToken(IdentifierTT, nIdentifier),
-		pToken(TrueTT, nTrue),
-		pToken(FalseTT, nFalse),
-		pToken(NullTT, nNull),
-		pToken(FailTT, nFail),
-		pToken(SuccessTT, nSuccess),
-		pToken(StringTT, nString),
-		pToken(IntTT, nInt),
-		pToken(FloatTT, nFloat),
-		pToken(UnderscoreTT, nUnderscore),
-		pToken(IndexTT, nIndex),
-		pList,
-		pObject,
-		pSet,
+		pIdentifier,
+		pToken(TrueTT, nAtom(BoolNT)),
+		pToken(FalseTT, nAtom(BoolNT)),
+		pToken(NullTT, nAtom(NullNT)),
+		pToken(FailTT, nAtom(FailNT)),
+		pToken(SuccessTT, nAtom(SuccessNT)),
+		pToken(StringTT, nAtom(StringNT)),
+		pToken(IntTT, nAtom(IntNT)),
+		pToken(FloatTT, nAtom(FloatNT)),
+		pToken(UnderscoreTT, nAtom(UnderscoreNT)),
+		pToken(IndexTT, nAtom(IndexNT)),
 		// pTuple,
 		pGroup,
 	)
 
-	pArgs = Then(ThenMaybe(
-		nestNode(func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) }, ArgNT),
-		Plus(
-			Then(
-				pToken(CommaTT, nil),
-				nestNode(func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) }, ArgNT),
-				takeSecond,
-			),
-			nLinked,
-		),
-		nRhs,
-	), pToken(RightParenTT, nil), takeFirst)
+	pCollection = Choice(
+		pList,
+		pObject,
+		pSet,
+	)
+
+	pArgs = Then(
+		// KVPairs for named params?
+		CommaSeparated(nestLeft(func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) }, ArgNT)),
+		pToken(RightParenTT, nil),
+		takeFirst,
+	)
 	pCallRhs = nestRight(Then(
 		pToken(LeftParenTT, nil),
-		Choice(nestNode(pToken(RightParenTT, nil), ArgNT), pArgs),
+		Choice(nestLeft(pToken(RightParenTT, nil), ArgNT), pArgs),
 		takeSecond,
 	), CallNT)
 
@@ -197,29 +155,24 @@ func init() {
 			nRhs,
 		),
 	)
-	pListSlice = nestRight(Then(
-		pToken(LeftBracketTT, nil),
-		Then(pSlice, pToken(RightBracketTT, nil), takeFirst),
-		takeSecond,
-	), ListSliceNT)
-	pBracketAccess = nestRight(Then(
-		pToken(LeftBracketTT, nil),
-		Then(
-			func(r ParseRes, n Nodify) ParseRes { return pSimpleExpr(r, n) },
-			pToken(RightBracketTT, nil),
-			takeFirst),
-		takeSecond,
-	), BracketAccessNT)
+	pListSlice = nestRight(InBrackets(pSlice), ListSliceNT)
+	pBracketAccess = nestRight(
+		InBrackets(func(r ParseRes, n Nodify) ParseRes { return pSimpleExpr(r, n) }),
+		BracketAccessNT)
 
 	pFieldAccess = nestRight(Then(
 		pToken(DotTT, nil),
-		Choice(pToken(IdentifierTT, nIdentifier), pToken(UnderscoreTT, nUnderscore)),
+		Choice(pIdentifier, pToken(UnderscoreTT, nAtom(UnderscoreNT))),
 		takeSecond,
 	), FieldAccessNT)
 
 	pPrimaryRhs = Plus(Choice(pCallRhs, pListSlice, pBracketAccess, pFieldAccess), nLeftAssoc)
 
-	pPrimary = ThenMaybe(pAtom, pPrimaryRhs, nEndLeftAssoc) // function call, list access, object access, etc.
+	pPrimary = ThenMaybe(
+		Choice(pAtom, pCollection),
+		pPrimaryRhs,
+		nEndLeftAssoc,
+	) // function call, list access, object access, etc.
 
 	// Unary expressions
 	pUnPostOp = Choice(pOperatorUnary(QuestionMarkTT))
@@ -231,7 +184,7 @@ func init() {
 			nRhs), nRightAssoc)
 	pPower = ThenMaybe(pUnaryPost, pPowerRhs, nBinary)
 	pUnPreOp = Choice(pOperatorUnary(BangTT), pOperatorUnary(MinusTT), pOperatorUnary(HashTT))
-	pUnaryPre = Either(Then(Plus(pUnPreOp, nUnaryNested), pPower, nUnaryNested), pPower)
+	pUnaryPre = Choice(Then(Plus(pUnPreOp, nUnaryNested), pPower, nUnaryNested), pPower)
 
 	// Binary expressions
 	// Range
@@ -255,7 +208,7 @@ func init() {
 		ThenMaybe(pUnaryPre, pRangeRhs, nRange),
 	)
 
-	pSumOp = Either(pOperator(PlusTT), pOperator(MinusTT))
+	pSumOp = Choice(pOperator(PlusTT), pOperator(MinusTT))
 	pSumRhs = Plus(Then(pSumOp, pTerm, nRhs), nLeftAssoc)
 	pSum = ThenMaybe(pTerm, pSumRhs, nEndLeftAssoc)
 
@@ -263,7 +216,7 @@ func init() {
 	pComparisonRhs = Plus(Then(pComparisonOp, pSum, nRhs), nLeftAssoc)
 	pComparison = ThenMaybe(pSum, pComparisonRhs, nEndLeftAssoc)
 
-	pEqualityOp = Either(pOperator(EqualEqualTT), pOperator(BangEqualTT))
+	pEqualityOp = Choice(pOperator(EqualEqualTT), pOperator(BangEqualTT))
 	pEqualityRhs = Plus(Then(pEqualityOp, pComparison, nRhs), nLeftAssoc)
 	pEquality = ThenMaybe(pComparison, pEqualityRhs, nEndLeftAssoc)
 
@@ -282,68 +235,55 @@ func init() {
 
 	// Conditional expressions
 	pElseRhs = Then(pToken(ElseTT, nil), func(r ParseRes, n Nodify) ParseRes { return pCondElseExpr(r, n) }, takeSecond)
-	pUnlessRhs = Then(pOperator(UnlessTT), pFallback, invertSecond(nLhs))
+	pUnlessRhs = Then(pOperator(UnlessTT), pFallback, negateSecond(nLhs))
 	pIfRhs = Then(pOperator(IfTT), pFallback, nLhs)
 	pCondRhs = Choice(pIfRhs, pUnlessRhs)
 	pCondExpr = ThenMaybe(pFallback, pCondRhs, nBinaryFlip)
 	pCondElseExpr = ThenMaybe(pCondExpr, pElseRhs, nElse)
 
 	// Lambdas
-	pListDestruc = Wrapped(
-		LeftBracketTT,
+	pListDestruc = InBrackets(
 		ThenMaybe(
-			listify(pToken(IdentifierTT, nIdentifier)),
+			listify(pIdentifier),
 			Plus(
 				Then(
 					pToken(CommaTT, nil),
-					pToken(IdentifierTT, nIdentifier),
+					pIdentifier,
 					takeSecond,
 				), nListTail),
 			nListHead,
-		),
-		RightBracketTT,
-	)
-	pObjPairDestruc = ThenMaybe(
-		pToken(IdentifierTT, nIdentifier),
+		))
+	pObjPairDestruc = nestLeft(ThenMaybe(
+		pIdentifier,
 		Then(
 			pToken(ColonTT, nil),
-			pToken(IdentifierTT, nIdentifier), // pParam
+			pIdentifier, // pParam
 			takeSecond,
 		),
 		nKVPair,
-	)
-	pObjDestruc = Wrapped(
-		LeftBraceTT,
-		ThenMaybe(
-			skipNewLines(pObjPairDestruc),
-			Plus(
-				Then(
-					pToken(CommaTT, nil),
-					skipNewLines(pObjPairDestruc), // pParam
-					takeSecond,
-				),
-				nLinked),
-			nRhs,
+	), ObjectItemNT)
+	pObjDestruc = InBraces(CommaSeparated(pObjPairDestruc))
+
+	pParam = Choice(pToken(IdentifierTT, nParam), nestLeft(pListDestruc, ParamNT), nestLeft(pObjDestruc, ParamNT))
+	pParams =
+		Choice(
+			// single identifier: x => ...
+			pToken(IdentifierTT, nParam),
+			// empty params: () => ...
+			Then(
+				pToken(LeftParenTT, nil),
+				pToken(RightParenTT, nil),
+				nAlways(ParamNT)),
+			// comma-separated params: (x,y) => ...
+			InParens(CommaSeparated(pParam)),
+		)
+	pLambdaRhs = Then(trim(pOperator(ArrowTT)),
+		Choice(
+			trim(func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) }),
+			InBraces(func(r ParseRes, n Nodify) ParseRes { return pStmts(r, n) }),
 		),
-		RightBraceTT,
-	)
-
-	pParam = Choice(pToken(IdentifierTT, nParam), nestNode(pListDestruc, ParamNT), nestNode(pObjDestruc, ParamNT))
-	pParamsRhs = Plus(Then(pToken(CommaTT, nil), pParam, takeSecond), nLinked)
-	pParams = ThenMaybe(pParam, pParamsRhs, nRhs)
-	pParenParams = Wrapped(LeftParenTT, pParams, RightParenTT)
-	// Then(Then(pToken(LeftParenTT, nil), pParams, takeSecond), pToken(RightParenTT, nil), takeFirst)
-	pEmptyParams = Then(pToken(LeftParenTT, nil), pToken(RightParenTT, nil), func(res ...ParseRes) *Node { return &Node{Type: ParamNT} })
-	pSingleParam = pToken(IdentifierTT, nParam)
-
-	pLambdaRhs = Then(pOperator(ArrowTT),
-		skipNewLines(Choice(
-			func(r ParseRes, n Nodify) ParseRes { return pExpr(r, n) },
-			skipNewLines(Then(Then(pToken(LeftBraceTT, nil),
-				skipNewLines(func(r ParseRes, n Nodify) ParseRes { return pStmts(r, n) }), takeSecond),
-				skipNewLines(pToken(RightBraceTT, nil)), takeFirst)))),
 		nRhs)
-	pLambda = Then(Choice(pSingleParam, pEmptyParams, pParenParams), pLambdaRhs, nBinary)
+	pLambda = Then(pParams, pLambdaRhs, nBinary)
 
 	pSimpleExpr = Choice(pLambda, pCondElseExpr)
 
@@ -352,7 +292,8 @@ func init() {
 	pPipeExprRhs = Then(pOperator(PipeTT), pCompoundExprArg, nRhs)
 	pWhereExprRhs = Then(pOperator(WhereTT), pCompoundExprArg, nRhs)
 	pMapExprRhs = Then(pOperator(MapTT), pCompoundExprArg, nRhs)
-	pCompoundExprRhs = Plus(skipNewLines(Choice(pPipeExprRhs, pWhereExprRhs, pMapExprRhs)), nLeftAssoc)
+	pFindExprRhs = Then(pOperator(FindTT), pCompoundExprArg, nRhs)
+	pCompoundExprRhs = Plus(trim(Choice(pPipeExprRhs, pWhereExprRhs, pMapExprRhs, pFindExprRhs)), nLeftAssoc)
 	pCompoundExpr = ThenMaybe(pSimpleExpr, pCompoundExprRhs, nEndLeftAssoc)
 
 	pExpr = Choice(pCompoundExpr)
@@ -361,18 +302,18 @@ func init() {
 
 	// Assignment and declaration
 	pAssignOp = Choice(pAssignOperator(EqualTT), pAssignOperator(PlusEqualTT), pAssignOperator(MinusEqualTT), pAssignOperator(StarEqualTT), pAssignOperator(SlashEqualTT), pAssignOperator(ModuloEqualTT), pAssignOperator(BarEqualTT))
-	pAssignRhs = Then(pAssignOp, skipNewLines(pExpr), nAssignmentRhs)
+	pAssignRhs = Then(pAssignOp, pExpr, nAssignmentRhs)
 	pAssignTarget = ThenMaybe(
-		pToken(IdentifierTT, nIdentifier),
+		pIdentifier,
 		Plus(Choice(pBracketAccess, pFieldAccess), nLeftAssoc),
 		nEndLeftAssoc,
 	)
 	pAssignment = Then(pAssignTarget, pAssignRhs, nAssignment)
 
-	pDeclRhs = Then(pOperator(ColonEqualTT), maybeFunc(skipNewLines(pExpr)), nRhs)
+	pDeclRhs = Then(pOperator(ColonEqualTT), maybeFunc(pExpr), nRhs)
 	pDeclTarget = Choice(
 		pListDestruc,
-		pToken(IdentifierTT, nIdentifier),
+		pIdentifier,
 		pObjDestruc)
 	pConstDecl = Then(pDeclTarget, pDeclRhs, nBinary)
 	pVarDecl = Then(Then(pToken(VarTT, nil), pDeclTarget, takeSecond), alterNodeType(pDeclRhs, VarDeclNT), nBinary)
@@ -380,18 +321,16 @@ func init() {
 
 	pReturnStmt = nestRight(Then(pToken(ReturnTT, nil), pExpr, takeSecond), ReturnStmtNT)
 	pImportStmt = ThenMaybe(
-		Then(pToken(ImportTT, nil), pToken(StringTT, nString), nImport),
-		Then(pToken(AsTT, nil), pToken(IdentifierTT, nIdentifier), takeSecond),
+		Then(pToken(ImportTT, nil), pToken(StringTT, nAtom(StringNT)), nImport),
+		Then(pToken(AsTT, nil), pIdentifier, takeSecond),
 		nRhs,
 	)
 
 	pSimpleStmt = Choice(pReturnStmt, pOperator(BreakTT), pOperator(ContinueTT), pDecl, pAssignment)
 
 	pStmtBody = Choice(
-		Then(pToken(ColonTT, nil), skipNewLines(func(r ParseRes, n Nodify) ParseRes { return pStmt(r, n) }), takeSecond),
-		skipNewLines(Then(Then(pToken(LeftBraceTT, nil),
-			skipNewLines(func(r ParseRes, n Nodify) ParseRes { return pStmts(r, n) }), takeSecond),
-			skipNewLines(pToken(RightBraceTT, nil)), takeFirst)),
+		Then(pToken(ColonTT, nil), func(r ParseRes, n Nodify) ParseRes { return pStmt(r, n) }, takeSecond),
+		InBraces(func(r ParseRes, n Nodify) ParseRes { return pStmts(r, n) }),
 	)
 
 	// Conditional statements
@@ -403,25 +342,30 @@ func init() {
 		Then(pOperator(IfTT), pExpr, nLhs),
 		pStmtBody, nRhs)
 	pUnlessStmt = Then(
-		Then(pOperator(UnlessTT), pExpr, invertSecond(nLhs)),
+		Then(pOperator(UnlessTT), pExpr, negateSecond(nLhs)),
 		pStmtBody, nRhs)
-	pCondStmt = Then(Choice(pIfStmt, pUnlessStmt), Maybe(pElseStmt), nElse)
+	pCondStmt = ThenMaybe(Choice(pIfStmt, pUnlessStmt), pElseStmt, nElse)
 
 	// Loop statements
 	pWhileStmt = Then(Then(pOperator(WhileTT), pExpr, nLhs), pStmtBody, nRhs)
-	pUntilStmt = Then(Then(pOperator(UntilTT), pExpr, invertSecond(nLhs)), pStmtBody, nRhs)
-	pForAssign = Then(pDeclTarget, Then(pOperator(LeftArrowTT), pExpr, nRhs), nBinary)
+	pUntilStmt = Then(Then(pOperator(UntilTT), pExpr, negateSecond(nLhs)), pStmtBody, nRhs)
+	pForAssign = alterNodeType(Then(pDeclTarget, Then(pOperator(InTT), pExpr, nRhs), nBinary), ConstDeclNT)
 	pForStmt = Then(Then(pOperator(ForTT), pForAssign, nLhs), pStmtBody, nRhs)
 	pLoopStmt = Choice(pWhileStmt, pUntilStmt, pForStmt)
 
 	pCompoundStmt = Choice(pCondStmt, pLoopStmt)
 
-	pStmt = nestNode(ThenMaybe(Choice(pImportStmt, pCompoundStmt, pSimpleStmt, pExpr), Either(pToken(NewLineTT, nil), pToken(SemicolonTT, nil)), takeFirst), StmtNT)
-	pStmts = Plus(skipNewLines(pStmt), nLinked)
+	pStmt = nestLeft(
+		trim(ThenMaybe( // trailing NewLine needs to be optional for nested stmts to work for some reason
+			Choice(pImportStmt, pCompoundStmt, pSimpleStmt, pExpr),
+			pToken(NewLineTT, nil),
+			takeFirst)),
+		StmtNT)
+	pStmts = Plus(pStmt, nLinked)
 
 	pProgram = Then(
 		pStmts,
-		skipNewLines(pToken(EOFTT, nil)),
+		trim(pToken(EOFTT, nil)),
 		takeFirst,
 	)
 }

@@ -1,7 +1,7 @@
 // Randomly generates text resembling that of an input file
 
 // tokenize and clean the input
-file := readFile("./data.txt")
+file := readFile("./examples/data.txt")
 
 special := split("1234567890-=`~!@#$%^&*()_+[]{}|;:'\",<.>/?", "") then Set
 
