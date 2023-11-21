@@ -33,6 +33,30 @@ var Then func(Parser, Parser, Nodify) Parser = func(a Parser, b Parser, n Nodify
 	}
 }
 
+var ThenNot func(Parser, Parser) Parser = func(a Parser, b Parser) Parser {
+	return func(curr ParseRes, _ Nodify) ParseRes {
+		if !curr.ok {
+			return curr
+		}
+
+		resA := a(curr, nil)
+		if resA.ok {
+			resB := b(resA, nil)
+			if resB.ok {
+				return fail("ThenNot failed")
+			}
+
+			return resA
+		}
+
+		return ParseRes{
+			ok:     false,
+			err:    resA.err,
+			tokens: curr.tokens,
+		}
+	}
+}
+
 // Then is a combinator corresponding to (A B) in a grammar. It takes a Nodify function with two
 // arguments: result A and result B
 var ThenMaybe func(Parser, Parser, Nodify) Parser = func(a Parser, b Parser, n Nodify) Parser {
@@ -51,6 +75,28 @@ var ThenMaybe func(Parser, Parser, Nodify) Parser = func(a Parser, b Parser, n N
 				return resB
 			}
 			return resA
+		}
+
+		return ParseRes{
+			ok:     false,
+			err:    resA.err,
+			tokens: curr.tokens,
+		}
+	}
+}
+
+var ThenPeek func(Parser, Parser, Nodify) Parser = func(a Parser, b Parser, n Nodify) Parser {
+	return func(curr ParseRes, _ Nodify) ParseRes {
+		if !curr.ok {
+			return curr
+		}
+
+		resA := a(curr, nil)
+		if resA.ok {
+			resB := b(resA, nil)
+			if resB.ok {
+				return resA
+			}
 		}
 
 		return ParseRes{
@@ -147,8 +193,8 @@ var Wrapped func(TokenType, Parser, TokenType) Parser = func(left TokenType, tar
 	return Then(
 		pToken(left, nil),
 		Then(
-			trim(target),
-			trim(pToken(right, nil)),
+			target,
+			pToken(right, nil),
 			takeFirst,
 		),
 		takeSecond,
@@ -156,28 +202,50 @@ var Wrapped func(TokenType, Parser, TokenType) Parser = func(left TokenType, tar
 }
 
 var InBraces func(Parser) Parser = func(p Parser) Parser {
-	return Wrapped(LeftBraceTT, trim(p), RightBraceTT)
+	return Wrapped(LeftBraceTT, p, RightBraceTT)
 }
 
 var InBrackets func(Parser) Parser = func(p Parser) Parser {
-	return Wrapped(LeftBracketTT, trim(p), RightBracketTT)
+	return Wrapped(LeftBracketTT, p, RightBracketTT)
 }
 
 var InParens func(Parser) Parser = func(p Parser) Parser {
-	return Wrapped(LeftParenTT, trim(p), RightParenTT)
+	return Wrapped(LeftParenTT, p, RightParenTT)
 }
 
 var CommaSeparated func(Parser) Parser = func(p Parser) Parser {
 	return ThenMaybe(
-		trim(p),
+		p,
 		Plus(
 			Then(
 				pToken(CommaTT, nil),
-				trim(p),
+				p,
 				takeSecond,
 			),
 			nLinked,
 		),
 		nRhs,
 	)
+}
+
+var Peek func(Parser) Parser = func(p Parser) Parser {
+	return func(curr ParseRes, _ Nodify) ParseRes {
+		if !curr.ok {
+			return curr
+		}
+
+		resA := p(curr, nil)
+		if resA.ok {
+			return ParseRes{
+				ok:     true,
+				tokens: curr.tokens,
+			}
+		}
+
+		return ParseRes{
+			ok:     false,
+			err:    resA.err,
+			tokens: curr.tokens,
+		}
+	}
 }

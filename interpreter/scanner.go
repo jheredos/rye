@@ -161,7 +161,7 @@ func scanOneRune(r byte) (TokenType, bool) {
 		'.': DotTT,
 		'-': MinusTT,
 		'+': PlusTT,
-		';': NewLineTT,
+		';': SemicolonTT,
 		'/': SlashTT,
 		'*': StarTT,
 		'%': ModuloTT,

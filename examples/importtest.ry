@@ -8,7 +8,7 @@ import "./packages/math.ry"
 inUnitCircle := (x,y) => math.sqrt(x^2 + y^2) < 1
 
 var hits := 0.0
-iterations := 10000
+iterations := 5000
 
 for i in ..iterations {
   x := random() * 2 - 1
@@ -19,4 +19,6 @@ for i in ..iterations {
 }
 
 result := hits / iterations
+print("hits:", hits)
+print("iterations:", iterations)
 print("result:", result * 4)

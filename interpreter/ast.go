@@ -58,6 +58,7 @@ const (
 	IfNT
 	ThenBranchNT
 	AssignmentNT
+	AugAssignNT
 	LambdaNT
 	ParamNT
 	ArgNT

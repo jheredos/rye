@@ -71,11 +71,13 @@ func maybeCastNumbers(a, b *Node) (*Node, *Node, NodeType) {
 		return nil, nil, ErrorNT
 	}
 
+	if a.Type == b.Type {
+		return a, b, a.Type
+	}
+
 	switch a.Type {
 	case IntNT:
-		if b.Type == IntNT {
-			return a, b, IntNT
-		} else if b.Type == FloatNT {
+		if b.Type == FloatNT {
 			return newFloat(float64(a.Val.(int64))), b, FloatNT
 		} else {
 			return a, b, ErrorNT
@@ -83,8 +85,6 @@ func maybeCastNumbers(a, b *Node) (*Node, *Node, NodeType) {
 	case FloatNT:
 		if b.Type == IntNT {
 			return a, newFloat(float64(b.Val.(int64))), FloatNT
-		} else if b.Type == FloatNT {
-			return a, b, FloatNT
 		} else {
 			return a, b, ErrorNT
 		}
@@ -92,35 +92,10 @@ func maybeCastNumbers(a, b *Node) (*Node, *Node, NodeType) {
 		switch b.Type {
 		case IntNT, FloatNT:
 			return a, newString(b.ToString()), StringNT
-		case StringNT:
-			return a, b, StringNT
 		default:
 			return a, b, ErrorNT
 		}
-	case ListNT:
-		if b.Type == ListNT {
-			return a, b, ListNT
-		}
-		return a, b, ErrorNT
-	case BoolNT:
-		if b.Type == BoolNT {
-			return a, b, BoolNT
-		}
-		return a, b, ErrorNT
-	case SuccessNT:
-		if b.Type == SuccessNT {
-			return a, b, SuccessNT
-		}
-		return a, b, ErrorNT
-	case FailNT:
-		if b.Type == FailNT {
-			return a, b, FailNT
-		}
-		return a, b, ErrorNT
-	case NullNT:
-		if b.Type == NullNT {
-			return a, b, NullNT
-		}
+	case ListNT, BoolNT, SuccessNT, FailNT, NullNT:
 		return a, b, ErrorNT
 	default:
 		return a, b, ErrorNT

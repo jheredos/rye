@@ -31,9 +31,6 @@ func Interpret(n *Node, env *Environment) (*Node, error) {
 	case IntNT, FloatNT, BoolNT, StringNT, FailNT, SuccessNT, NullNT, SetNT:
 		return copyNode(n), nil
 	case LambdaNT:
-		if n.Scope == nil {
-			n.Scope = newScope(env)
-		}
 		return copyNode(n), nil
 	case ObjectNT:
 		if n.Val == nil {
@@ -1179,8 +1176,15 @@ func interpretSetItem(n *Node, env *Environment) (res *Node, err error) {
 	curr := n
 	for curr != nil {
 		// handle spread
-		if curr.L.Type == SplatNT {
-			arg, err := Interpret(curr.L.R, env)
+		switch curr.L.Type {
+		case SplatNT, RangeNT, MapNT, WhereNT:
+			var arg *Node
+			var err error
+			if curr.L.Type == SplatNT {
+				arg, err = Interpret(curr.L.R, env)
+			} else {
+				arg, err = Interpret(curr.L, env)
+			}
 			if err != nil {
 				return nil, err
 			}

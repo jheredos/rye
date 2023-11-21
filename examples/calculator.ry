@@ -5,8 +5,8 @@
 //  term: atom (("*" | "/") term) | atom
 //  atom: NUMBER | "(" sum ")"
 
-digits := split("1234567890", "") then Set
-isDigit := _ in digits
+digits := Set(..10)
+isDigit := Int(_) in digits
 scanDigits := scanDigits(_[1..]) + _[0] if #_ and isDigit(_[0]) else ""
 
 parseNumber := ({tokens}) => {
@@ -90,7 +90,7 @@ until input == "exit\n" {
   cleaned := split(input, "") 
     where _ != " " and _ != "\n"
     then reverse    // reversing makes left-associative operations easier
-    
+
   res := parseSum({tokens: cleaned})
 
   print(res.result)

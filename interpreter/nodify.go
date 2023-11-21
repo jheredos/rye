@@ -449,9 +449,8 @@ var nAssignment Nodify = func(res ...ParseRes) *Node {
 	}
 
 	op.node.L = target.node
-	switch op.node.R.Type {
-	case SubtNT, AddNT, DivNT, MultNT, ModuloNT, FallbackNT:
-		// compound assignment
+	if op.node.Type == AugAssignNT {
+		op.node.Type = AssignmentNT
 		op.node.R.L = target.node
 	}
 

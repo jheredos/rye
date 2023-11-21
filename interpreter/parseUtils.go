@@ -29,9 +29,9 @@ func trim(p Parser) Parser {
 			return p(curr, nil)
 		}
 
-		for len(curr.tokens) > 0 && curr.tokens[0].Type == NewLineTT {
-			curr.tokens = curr.tokens[1:]
-		}
+		// for len(curr.tokens) > 0 && curr.tokens[0].Type == NewLineTT {
+		// 	curr.tokens = curr.tokens[1:]
+		// }
 
 		return p(curr, nil)
 	}
@@ -82,10 +82,17 @@ func pOperator(tt TokenType) Parser {
 			return curr
 		}
 
-		if len(curr.tokens) == 0 {
+		tokens := curr.tokens
+		if tt != NewLineTT {
+			for len(tokens) > 0 && tokens[0].Type == NewLineTT {
+				tokens = tokens[1:]
+			}
+		}
+		if len(tokens) == 0 {
 			return fail("Tokens exhausted")
 		}
-		if curr.tokens[0].Type == tt {
+
+		if tokens[0].Type == tt {
 			op, ok := operatorMap[tt]
 			if !ok {
 				return fail("Unknown operator")
@@ -93,7 +100,7 @@ func pOperator(tt TokenType) Parser {
 			return ParseRes{
 				ok:     true,
 				node:   &Node{Type: op},
-				tokens: curr.tokens[1:],
+				tokens: tokens[1:],
 			}
 		}
 		return fail("No match")
@@ -102,10 +109,17 @@ func pOperator(tt TokenType) Parser {
 
 func pOperatorUnary(tt TokenType) Parser {
 	return func(curr ParseRes, _ Nodify) ParseRes {
-		if len(curr.tokens) == 0 {
+		tokens := curr.tokens
+		if tt != NewLineTT {
+			for len(tokens) > 0 && tokens[0].Type == NewLineTT {
+				tokens = tokens[1:]
+			}
+		}
+		if len(tokens) == 0 {
 			return fail("Tokens exhausted")
 		}
-		if curr.tokens[0].Type == tt {
+
+		if tokens[0].Type == tt {
 			op, ok := map[TokenType]NodeType{
 				MinusTT:        UnaryNegNT,
 				BangTT:         LogicNotNT,
@@ -119,7 +133,7 @@ func pOperatorUnary(tt TokenType) Parser {
 			return ParseRes{
 				ok:     true,
 				node:   &Node{Type: op},
-				tokens: curr.tokens[1:],
+				tokens: tokens[1:],
 			}
 		}
 		return fail("No match")
@@ -132,14 +146,22 @@ func pToken(tt TokenType, n Nodify) Parser {
 		if !curr.ok {
 			return curr
 		}
-		if len(curr.tokens) == 0 {
+
+		tokens := curr.tokens
+		if tt != NewLineTT {
+			for len(tokens) > 0 && tokens[0].Type == NewLineTT {
+				tokens = tokens[1:]
+			}
+		}
+
+		if len(tokens) == 0 {
 			return fail("Tokens exhausted")
 		}
-		if curr.tokens[0].Type == tt {
+		if tokens[0].Type == tt {
 			res := ParseRes{
 				ok:     true,
-				parsed: &curr.tokens[0],
-				tokens: curr.tokens[1:],
+				parsed: &tokens[0],
+				tokens: tokens[1:],
 			}
 			if n != nil {
 				res.node = n(res)
@@ -150,10 +172,11 @@ func pToken(tt TokenType, n Nodify) Parser {
 		return ParseRes{
 			ok: false,
 			err: fmt.Sprintf(
-				"Line %d: Parsing error. Expected %s, received %s",
-				curr.tokens[0].Line,
+				"Line %d: Parsing error. Expected %s, received %s \"%s\"",
+				tokens[0].Line,
 				tt.ToString(),
-				curr.tokens[0].Lexeme),
+				tokens[0].Type.ToString(),
+				tokens[0].Lexeme),
 			tokens: curr.tokens,
 		}
 	}
@@ -170,15 +193,25 @@ var assignOpMap map[TokenType]NodeType = map[TokenType]NodeType{
 
 func pAssignOperator(tt TokenType) Parser {
 	return func(curr ParseRes, _ Nodify) ParseRes {
-		if len(curr.tokens) == 0 {
+		if !curr.ok {
+			return curr
+		}
+
+		tokens := curr.tokens
+		for len(tokens) > 0 && tokens[0].Type == NewLineTT {
+			tokens = tokens[1:]
+		}
+
+		if len(tokens) == 0 {
 			return fail("Tokens exhausted")
 		}
-		if curr.tokens[0].Type == tt {
+
+		if tokens[0].Type == tt {
 			if tt == EqualTT {
 				return ParseRes{
 					ok:     true,
 					node:   &Node{Type: AssignmentNT},
-					tokens: curr.tokens[1:],
+					tokens: tokens[1:],
 				}
 			}
 
@@ -189,12 +222,12 @@ func pAssignOperator(tt TokenType) Parser {
 			return ParseRes{
 				ok: true,
 				node: &Node{
-					Type: AssignmentNT,
+					Type: AugAssignNT,
 					R: &Node{
 						Type: nt,
 					},
 				},
-				tokens: curr.tokens[1:],
+				tokens: tokens[1:],
 			}
 		}
 		return fail("No match")

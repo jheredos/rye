@@ -320,6 +320,7 @@ func TestParseAssignment(t *testing.T) {
 	tests := []BinaryTest{
 		{`x := 1`, ConstDeclNT, IdentifierNT, IntNT, `(const x 1)`},
 		{`var y := 2`, VarDeclNT, IdentifierNT, IntNT, `(var y 2)`},
+		{`x = (x + y / x) / 2`, AssignmentNT, IdentifierNT, DivNT, `(= x (/ (+ x (/ y x)) 2))`},
 		{`y += 1`, AssignmentNT, IdentifierNT, AddNT, `(= y (+ y 1))`},
 		{`f := x => x + 1`, ConstDeclNT, IdentifierNT, LambdaNT, `(const f (lambda (param) (+ x 1)))`},
 		{`z.a = "foo"`, AssignmentNT, FieldAccessNT, StringNT, `(= (field-access z a) "foo")`},
@@ -357,6 +358,28 @@ func TestParseConditionalStmt(t *testing.T) {
         	(return fail)
 				)
 			)`},
+		{
+			`
+			if true {
+				unless false {
+					if true:
+						print("foo")
+				} else {
+					print("bar")
+				}
+			} else {
+				print("baz")
+			}
+			`, IfNT, `
+			(if true (then-branch
+				(if (! false) 
+				(then-branch 
+					(if true 
+					(call print (arg "foo"))) 
+				(call print (arg "bar")))) 
+			(call print (arg "baz"))))
+			`,
+		},
 	}
 
 	for _, test := range tests {
@@ -369,6 +392,21 @@ func TestParseLoop(t *testing.T) {
 	tests := []SingleNodeTest{
 		{`for x in 1..10: print(x)`, ForStmtNT, `(for (const x (range 1 10)) (call print (arg x)))`},
 		{`while true { print("foo") }`, WhileStmtNT, `(while true (call print (arg "foo")))`},
+		{
+			`
+			for i in ..100 {
+				x := i ^ 2
+				if x % 2 == 0 {
+					print(i)
+				}
+			}
+			`, ForStmtNT, `
+			(for (const i (range NIL_PTR 100)) 
+				(const x (^ i 2))
+				(if (== (% x 2) 0) 
+					(call print (arg i))))
+			`,
+		},
 	}
 
 	for _, test := range tests {

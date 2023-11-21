@@ -83,9 +83,9 @@ func runPrompt() {
 			fmt.Println(err)
 			continue
 		}
-		for _, t := range ts {
-			fmt.Println(t.ToString())
-		}
+		// for _, t := range ts {
+		// 	fmt.Println(t.ToString())
+		// }
 
 		// parse...
 		root, err := interpreter.Parse(ts)
