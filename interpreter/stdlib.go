@@ -687,10 +687,7 @@ var StdLib map[string]*Node = map[string]*Node{
 
 			keys := List{}
 			for k := range args[0].Val.(Object) {
-				keys = append(keys, &Node{
-					Type: StringNT,
-					Val:  k,
-				})
+				keys = append(keys, k.toNode())
 			}
 
 			return &Node{Type: ListNT, Val: keys}, nil

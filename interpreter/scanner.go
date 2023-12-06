@@ -230,6 +230,7 @@ func scanKeyword(s string) (TokenType, bool) {
 		"find":     FindTT,
 		"fold":     FoldTT,
 		"bind":     PipeTT, //BindTT,
+		"each":     MapTT,
 	}
 	tt, ok := keywords[s]
 	return tt, ok

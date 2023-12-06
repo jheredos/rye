@@ -336,6 +336,9 @@ func (n *Node) ToString() string {
 		res += "]"
 		return res
 	case ObjectNT:
+		if n.Val == nil {
+			return "{}"
+		}
 		obj := n.Val.(Object)
 		res := "{"
 		for k, v := range obj {

@@ -275,7 +275,7 @@ var nKVPair Nodify = func(res ...ParseRes) *Node {
 }
 
 var nObject Nodify = func(res ...ParseRes) *Node {
-	return &Node{Type: ObjectNT, Val: Object{}}
+	return &Node{Type: ObjectNT}
 }
 
 var nImport Nodify = func(res ...ParseRes) *Node {
